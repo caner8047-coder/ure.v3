@@ -177,14 +177,30 @@ class LegacyDataSeeder extends Seeder
             DB::table('tbBolumHavuz')->insert($h);
         }
 
-        // ===== 11. ADMIN USER (Laravel users tablosuna) =====
+        // ===== 11. ADMIN USER (tbPersonel ve Laravel users tablosuna) =====
+        $adminSifreRaw = '123456';
+        $adminSifreHash = hash('sha256', $adminSifreRaw);
+        
+        DB::table('tbPersonel')->updateOrInsert(
+            ['Mail' => 'admin@zemmobilya.com'],
+            [
+                'PersonelNo' => 9999,
+                'Ad' => 'Caner Bey',
+                'Soyad' => 'Yönetici',
+                'Telefon' => null,
+                'Adres' => null,
+                'Sifre' => $adminSifreHash,
+                'BolumAdiNo' => 0
+            ]
+        );
+
         DB::table('users')->updateOrInsert(
             ['email' => 'admin@zemmobilya.com'],
             [
                 'name' => 'Caner Bey',
                 'surname' => 'Yönetici',
                 'personnel_no' => '9999',
-                'password' => Hash::make('123456'),
+                'password' => $adminSifreHash,
                 'department_id' => null,
                 'created_at' => now(),
                 'updated_at' => now(),

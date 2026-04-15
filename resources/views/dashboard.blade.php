@@ -3,53 +3,51 @@
 @section('title', 'Dashboard')
 
 @section('content')
-<div class="row">
-    <div class="col-md-12">
-        <div class="card shadow-sm border-0">
-            <div class="card-body">
-                <h4 class="card-title mb-4">Sistem Özeti</h4>
-                
-                @if(Auth::user()->isAdmin())
-                    <div class="alert alert-info">
-                        <i class="bi bi-info-circle me-2"></i>
-                        Yönetici paneline hoşgeldiniz. Tüm üretim ve stok fonksiyonlarına erişiminiz bulunmaktadır.
-                    </div>
-                @else
-                    <div class="alert alert-success">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Personel paneline hoşgeldiniz. Size atanan görevleri buradan takip edebilirsiniz.
-                    </div>
-                @endif
-                
-                <div class="row mt-4">
-                    <div class="col-md-4">
-                        <div class="card bg-primary text-white mb-3">
-                            <div class="card-body">
-                                <h5 class="card-title">Aktif İş Emirleri</h5>
-                                <p class="card-text fs-2">0</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card bg-success text-white mb-3">
-                            <div class="card-body">
-                                <h5 class="card-title">Tamamlanan Görevler</h5>
-                                <p class="card-text fs-2">0</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card bg-warning text-dark mb-3">
-                            <div class="card-body">
-                                <h5 class="card-title">Kritik Stok Uyarıları</h5>
-                                <p class="card-text fs-2">0</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+<div class="stats-grid">
+    <article class="metric-card">
+        <p class="metric-label">Aktif Is Emirleri</p>
+        <h3 class="metric-value">0</h3>
+        <p class="metric-copy">Havuzda bekleyen is emri sayisi.</p>
+    </article>
 
+    <article class="metric-card">
+        <p class="metric-label">Tamamlanan Gorevler</p>
+        <h3 class="metric-value">0</h3>
+        <p class="metric-copy">Kapatilan gorev toplami.</p>
+    </article>
+
+    <article class="metric-card">
+        <p class="metric-label">Kritik Stok Uyarilari</p>
+        <h3 class="metric-value">0</h3>
+        <p class="metric-copy">Esik altindaki stok sayisi.</p>
+    </article>
+</div>
+
+@if(Auth::user()->isAdmin())
+    <div class="panel-surface">
+        <div class="section-header compact">
+            <div>
+                <h3 class="section-title">Yonetici Paneli</h3>
+                <p class="section-copy">Tum uretim ve stok fonksiyonlarina erisiminiz bulunmaktadir.</p>
             </div>
         </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ route('admin.index') }}" class="btn btn-primary"><i class="bi bi-grid-1x2 me-1"></i>Is Emri Havuzu</a>
+            <a href="{{ route('stocks.index') }}" class="btn btn-outline-secondary"><i class="bi bi-box-seam me-1"></i>Stoklar</a>
+            <a href="{{ route('reports.tasks') }}" class="btn btn-outline-secondary"><i class="bi bi-graph-up-arrow me-1"></i>Raporlar</a>
+        </div>
     </div>
-</div>
+@else
+    <div class="panel-surface">
+        <div class="section-header compact">
+            <div>
+                <h3 class="section-title">Personel Paneli</h3>
+                <p class="section-copy">Size atanan gorevleri buradan takip edebilirsiniz.</p>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ route('user.dashboard') }}" class="btn btn-primary"><i class="bi bi-list-check me-1"></i>Gorevlerim</a>
+        </div>
+    </div>
+@endif
 @endsection

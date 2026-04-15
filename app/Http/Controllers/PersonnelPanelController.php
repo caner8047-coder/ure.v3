@@ -12,32 +12,52 @@ use App\Models\Personnel;
  */
 class PersonnelPanelController extends Controller
 {
+    private function personelNo(Request $request): int
+    {
+        return intval($request->user()->personnel_no ?? 0);
+    }
+
+    private function pendingApprovalSql(string $column = 'Onay'): string
+    {
+        return "({$column} IS NULL OR {$column} = 0 OR {$column} = '0' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'false')";
+    }
+
+    private function approvedApprovalSql(string $column = 'Onay'): string
+    {
+        return "({$column} = 1 OR {$column} = '1' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'true')";
+    }
+
     /** Dashboard istatistikleri */
     public function dashboardStats(Request $request)
     {
-        $user = $request->user();
-        // kullanıcının personnel_no'su ile tbPersonel eşleştirebiliriz
-        $personelNo = intval($user->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $aktifGorevler = DB::table('tbPersonelGorev')
             ->where('PersonelNo', $personelNo)
-            ->where('Onay', 0)
+            ->whereRaw($this->pendingApprovalSql())
             ->count();
 
         $tamamlanan = DB::table('tbPersonelGorev')
             ->where('PersonelNo', $personelNo)
-            ->where('Onay', 1)
+            ->whereRaw($this->approvedApprovalSql())
             ->count();
 
         $bekleyenAdet = DB::table('tbPersonelGorev')
             ->where('PersonelNo', $personelNo)
-            ->where('Onay', 0)
+            ->whereRaw($this->pendingApprovalSql())
             ->sum('BekleyenAdet');
+
+        $alinabilir = DB::table('tbBolumHavuz as bh')
+            ->join('tbPersonel as p', 'bh.BolumAdiNo', '=', 'p.BolumAdiNo')
+            ->where('p.PersonelNo', $personelNo)
+            ->where('bh.Adet', '>', 0)
+            ->count();
 
         return response()->json([
             'success' => true,
             'aktifGorevler' => $aktifGorevler,
             'tamamlanan' => $tamamlanan,
+            'alinabilir' => $alinabilir,
             'bekleyenAdet' => intval($bekleyenAdet),
         ]);
     }
@@ -45,10 +65,11 @@ class PersonnelPanelController extends Controller
     /** Aktif görevlerim */
     public function myTasks(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $tasks = DB::select("
-            SELECT pg.No, pg.Adet, pg.BekleyenAdet, pg.GorevTarihi,
+            SELECT pg.No, pg.Adet, pg.BekleyenAdet,
+                   IFNULL(pg.GorevBaslamaTarihi, '') AS GorevBaslamaTarihi,
                    IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
                    IFNULL(b.BolumAdi,'') AS BolumAdi,
                    IFNULL(u.UrunID,'') AS UrunAdi
@@ -56,8 +77,8 @@ class PersonnelPanelController extends Controller
             LEFT JOIN tbAraUrun au ON pg.AraUrunAdiNo = au.No
             LEFT JOIN tbBolum b ON pg.BolumAdiNo = b.No
             LEFT JOIN tbUrunler u ON pg.UrunIDNo = u.No
-            WHERE pg.PersonelNo = ? AND pg.Onay = 0
-            ORDER BY pg.GorevTarihi DESC
+            WHERE pg.PersonelNo = ? AND " . $this->pendingApprovalSql('pg.Onay') . "
+            ORDER BY STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i') DESC, pg.No DESC
         ", [$personelNo]);
 
         return response()->json(['success' => true, 'tasks' => $tasks]);
@@ -66,16 +87,24 @@ class PersonnelPanelController extends Controller
     /** Görev detay */
     public function taskDetail(Request $request, $id)
     {
+        $personelNo = $this->personelNo($request);
+
         $task = DB::selectOne("
-            SELECT pg.*, IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
+            SELECT pg.*,
+                   IFNULL(pg.GorevBaslamaTarihi, '') AS GorevBaslamaTarihiFormatted,
+                   IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
                    IFNULL(b.BolumAdi,'') AS BolumAdi,
                    IFNULL(u.UrunID,'') AS UrunAdi
             FROM tbPersonelGorev pg
             LEFT JOIN tbAraUrun au ON pg.AraUrunAdiNo = au.No
             LEFT JOIN tbBolum b ON pg.BolumAdiNo = b.No
             LEFT JOIN tbUrunler u ON pg.UrunIDNo = u.No
-            WHERE pg.No = ?
-        ", [$id]);
+            WHERE pg.No = ? AND pg.PersonelNo = ?
+        ", [$id, $personelNo]);
+
+        if (!$task) {
+            return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+        }
 
         return response()->json(['success' => true, 'task' => $task]);
     }
@@ -88,41 +117,72 @@ class PersonnelPanelController extends Controller
             return response()->json(['success' => false, 'message' => 'Geçersiz adet']);
         }
 
-        $gorev = DB::table('tbPersonelGorev')->where('No', $id)->first();
-        if (!$gorev) {
-            return response()->json(['success' => false, 'message' => 'Görev bulunamadı']);
-        }
+        $personelNo = $this->personelNo($request);
+        $sonuc = DB::transaction(function () use ($id, $personelNo, $adet) {
+            $gorev = DB::table('tbPersonelGorev')
+                ->where('No', $id)
+                ->where('PersonelNo', $personelNo)
+                ->lockForUpdate()
+                ->first();
 
-        $yeniBekleyen = max(0, $gorev->BekleyenAdet - $adet);
-        $updateData = ['BekleyenAdet' => $yeniBekleyen];
+            if (!$gorev) {
+                return ['success' => false, 'message' => 'Görev bulunamadı'];
+            }
 
-        if ($yeniBekleyen <= 0) {
-            $updateData['Onay'] = 1;
-        }
+            $gerceklesenAdet = min($adet, intval($gorev->BekleyenAdet ?? 0));
+            if ($gerceklesenAdet <= 0) {
+                return ['success' => false, 'message' => 'Tamamlanacak adet kalmamış.'];
+            }
 
-        DB::table('tbPersonelGorev')->where('No', $id)->update($updateData);
+            $yeniBekleyen = max(0, intval($gorev->BekleyenAdet ?? 0) - $gerceklesenAdet);
+            $updateData = ['BekleyenAdet' => $yeniBekleyen];
 
-        // Stok güncelle
-        DB::table('tbBolumAraStok')
-            ->where('AraUrunAdiNo', $gorev->AraUrunAdiNo)
-            ->increment('Adet', $adet);
+            if ($yeniBekleyen <= 0) {
+                $updateData['Onay'] = 'true';
+            }
 
-        return response()->json([
-            'success' => true,
-            'message' => $adet . ' adet üretim kaydedildi.',
-            'kalanAdet' => $yeniBekleyen,
-        ]);
+            DB::table('tbPersonelGorev')->where('No', $id)->update($updateData);
+
+            $stockRow = DB::table('tbBolumAraStok')
+                ->where('AraUrunAdiNo', $gorev->AraUrunAdiNo)
+                ->where('BolumAdiNo', $gorev->BolumAdiNo)
+                ->lockForUpdate()
+                ->first();
+
+            if ($stockRow) {
+                DB::table('tbBolumAraStok')
+                    ->where('No', $stockRow->No)
+                    ->update(['Adet' => intval($stockRow->Adet ?? 0) + $gerceklesenAdet]);
+            } else {
+                DB::table('tbBolumAraStok')->insert([
+                    'BolumAdiNo' => $gorev->BolumAdiNo,
+                    'Adet' => $gerceklesenAdet,
+                    'AraUrunAdiNo' => $gorev->AraUrunAdiNo,
+                    'UrunIDNo' => $gorev->UrunIDNo,
+                    'TamponMiktar' => 0,
+                ]);
+            }
+
+            return [
+                'success' => true,
+                'message' => $gerceklesenAdet . ' adet üretim kaydedildi.',
+                'kalanAdet' => $yeniBekleyen,
+            ];
+        });
+
+        return response()->json($sonuc, ($sonuc['success'] ?? false) ? 200 : 422);
     }
 
     /** Alınabilir görevler (havuzdan) */
     public function availableTasks(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
         $personel = DB::table('tbPersonel')->where('PersonelNo', $personelNo)->first();
         $bolumAdiNo = intval($personel->BolumAdiNo ?? 0);
 
         $tasks = DB::select("
-            SELECT bh.No, bh.Adet, bh.ToplamAdet, bh.GorevBaslangicTarihi,
+            SELECT bh.No, bh.Adet, bh.ToplamAdet,
+                   CONCAT(IFNULL(bh.GorevBaslangicTarihi, ''), CASE WHEN IFNULL(bh.GorevBaslangicSaati, '') <> '' THEN CONCAT(' ', bh.GorevBaslangicSaati) ELSE '' END) AS GorevBaslangicTarihi,
                    IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
                    IFNULL(b.BolumAdi,'') AS BolumAdi,
                    IFNULL(u.UrunID,'') AS UrunAdi
@@ -140,44 +200,69 @@ class PersonnelPanelController extends Controller
     /** Görev al (havuzdan personele aktar) */
     public function takeTask(Request $request, $id)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
         $adet = intval($request->input('adet', 0));
+        $sonuc = DB::transaction(function () use ($personelNo, $adet, $id) {
+            $personel = DB::table('tbPersonel')
+                ->where('PersonelNo', $personelNo)
+                ->lockForUpdate()
+                ->first();
 
-        $havuz = DB::table('tbBolumHavuz')->where('No', $id)->first();
-        if (!$havuz) {
-            return response()->json(['success' => false, 'message' => 'Havuz kaydı bulunamadı']);
-        }
+            if (!$personel) {
+                return ['success' => false, 'message' => 'Personel bulunamadı'];
+            }
 
-        if ($adet <= 0 || $adet > $havuz->Adet) {
-            $adet = $havuz->Adet;
-        }
+            $havuz = DB::table('tbBolumHavuz')
+                ->where('No', $id)
+                ->lockForUpdate()
+                ->first();
 
-        // Havuzdan düş
-        $kalanAdet = $havuz->Adet - $adet;
-        DB::table('tbBolumHavuz')->where('No', $id)->update(['Adet' => $kalanAdet]);
+            if (!$havuz) {
+                return ['success' => false, 'message' => 'Havuz kaydı bulunamadı'];
+            }
 
-        // Personele görev ata
-        DB::table('tbPersonelGorev')->insert([
-            'UrunIDNo' => $havuz->UrunIDNo,
-            'PersonelNo' => $personelNo,
-            'Adet' => $adet,
-            'BekleyenAdet' => $adet,
-            'Onay' => 0,
-            'AraUrunAdiNo' => $havuz->AraUrunAdiNo,
-            'BolumAdiNo' => $havuz->BolumAdiNo,
-            'GorevTarihi' => now(),
-        ]);
+            if (intval($personel->BolumAdiNo ?? 0) !== intval($havuz->BolumAdiNo ?? 0)) {
+                return ['success' => false, 'message' => 'Farklı bölüm görevini alamazsınız.'];
+            }
 
-        return response()->json(['success' => true, 'message' => $adet . ' adet görev alındı.']);
+            $alinacakAdet = $adet;
+            if ($alinacakAdet <= 0 || $alinacakAdet > intval($havuz->Adet ?? 0)) {
+                $alinacakAdet = intval($havuz->Adet ?? 0);
+            }
+
+            if ($alinacakAdet <= 0) {
+                return ['success' => false, 'message' => 'Alınacak görev adedi kalmamış.'];
+            }
+
+            DB::table('tbBolumHavuz')
+                ->where('No', $id)
+                ->update(['Adet' => intval($havuz->Adet ?? 0) - $alinacakAdet]);
+
+            DB::table('tbPersonelGorev')->insert([
+                'UrunIDNo' => $havuz->UrunIDNo,
+                'GorevBaslamaTarihi' => now()->format('d/m/Y H:i'),
+                'PersonelNo' => $personelNo,
+                'Adet' => $alinacakAdet,
+                'BekleyenAdet' => $alinacakAdet,
+                'Onay' => 'false',
+                'AraUrunAdiNo' => $havuz->AraUrunAdiNo,
+                'BolumAdiNo' => $havuz->BolumAdiNo,
+            ]);
+
+            return ['success' => true, 'message' => $alinacakAdet . ' adet görev alındı.'];
+        });
+
+        return response()->json($sonuc, ($sonuc['success'] ?? false) ? 200 : 422);
     }
 
     /** Tamamlanan görevlerim */
     public function completedTasks(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $tasks = DB::select("
-            SELECT pg.No, pg.Adet, pg.GorevTarihi,
+            SELECT pg.No, pg.Adet,
+                   IFNULL(pg.GorevBaslamaTarihi, '') AS GorevBaslamaTarihi,
                    IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
                    IFNULL(b.BolumAdi,'') AS BolumAdi,
                    IFNULL(u.UrunID,'') AS UrunAdi
@@ -185,8 +270,8 @@ class PersonnelPanelController extends Controller
             LEFT JOIN tbAraUrun au ON pg.AraUrunAdiNo = au.No
             LEFT JOIN tbBolum b ON pg.BolumAdiNo = b.No
             LEFT JOIN tbUrunler u ON pg.UrunIDNo = u.No
-            WHERE pg.PersonelNo = ? AND pg.Onay = 1
-            ORDER BY pg.GorevTarihi DESC
+            WHERE pg.PersonelNo = ? AND " . $this->approvedApprovalSql('pg.Onay') . "
+            ORDER BY STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i') DESC, pg.No DESC
         ", [$personelNo]);
 
         return response()->json(['success' => true, 'tasks' => $tasks]);
@@ -195,17 +280,17 @@ class PersonnelPanelController extends Controller
     /** Görev raporlarım */
     public function taskReport(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $report = DB::select("
             SELECT IFNULL(au.AraUrunAdi,'Bilinmiyor') AS UrunAdi,
                    SUM(pg.Adet) AS ToplamUretim,
                    COUNT(*) AS GorevSayisi,
-                   MIN(pg.GorevTarihi) AS IlkGorev,
-                   MAX(pg.GorevTarihi) AS SonGorev
+                   DATE_FORMAT(MIN(STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i')), '%d/%m/%Y %H:%i') AS IlkGorev,
+                   DATE_FORMAT(MAX(STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i')), '%d/%m/%Y %H:%i') AS SonGorev
             FROM tbPersonelGorev pg
             LEFT JOIN tbAraUrun au ON pg.AraUrunAdiNo = au.No
-            WHERE pg.PersonelNo = ? AND pg.Onay = 1
+            WHERE pg.PersonelNo = ? AND " . $this->approvedApprovalSql('pg.Onay') . "
             GROUP BY au.AraUrunAdi
             ORDER BY ToplamUretim DESC
         ", [$personelNo]);
@@ -216,13 +301,14 @@ class PersonnelPanelController extends Controller
     /** Bana verilen görevler (tbVerilenGorevler) */
     public function assignedToMe(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $personel = DB::table('tbPersonel')->where('PersonelNo', $personelNo)->first();
         $bolumAdiNo = intval($personel->BolumAdiNo ?? 0);
 
         $tasks = DB::select("
-            SELECT bh.No, bh.Adet, bh.ToplamAdet, bh.GorevBaslangicTarihi,
+            SELECT bh.No, bh.Adet, bh.ToplamAdet,
+                   CONCAT(IFNULL(bh.GorevBaslangicTarihi, ''), CASE WHEN IFNULL(bh.GorevBaslangicSaati, '') <> '' THEN CONCAT(' ', bh.GorevBaslangicSaati) ELSE '' END) AS GorevBaslangicTarihi,
                    IFNULL(au.AraUrunAdi,'') AS AraUrunAdi,
                    IFNULL(u.UrunID,'') AS UrunAdi
             FROM tbBolumHavuz bh
@@ -238,10 +324,10 @@ class PersonnelPanelController extends Controller
     /** Mesajlar (tbIletisim) */
     public function messages(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
 
         $messages = DB::select("
-            SELECT m.MesajNo, m.Mesaj, m.Tarih, m.Okundu,
+            SELECT m.MesajNo, m.Mesaj, m.Tarih, 0 as Okundu,
                    IFNULL(p.Ad,'Sistem') AS GonderenAd,
                    IFNULL(p.Soyad,'') AS GonderenSoyad
             FROM tbIletisim m
@@ -258,7 +344,7 @@ class PersonnelPanelController extends Controller
     /** Mesaj gönder */
     public function sendMessage(Request $request)
     {
-        $personelNo = intval($request->user()->personnel_no ?? 0);
+        $personelNo = $this->personelNo($request);
         $mesaj = $request->input('mesaj', '');
         $bolumAdiNo = intval($request->input('bolumAdiNo', 0));
 
@@ -270,10 +356,101 @@ class PersonnelPanelController extends Controller
             'PersonelNo' => $personelNo,
             'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
             'Mesaj' => $mesaj,
-            'Tarih' => now(),
-            'Okundu' => 0,
+            'Tarih' => now()->format('Y-m-d H:i:s'),
+            'Saat' => now()->format('H:i:s'),
         ]);
 
         return response()->json(['success' => true, 'message' => 'Mesaj gönderildi.']);
+    }
+
+    /** Mesaj sil (E7: deleteMesaj.aspx karşılığı) */
+    public function deleteMessage(Request $request, $id)
+    {
+        $deleted = DB::table('tbIletisim')->where('MesajNo', $id)->delete();
+        if ($deleted) {
+            return response()->json(['success' => true, 'message' => 'Mesaj silindi.']);
+        }
+        return response()->json(['success' => false, 'message' => 'Mesaj bulunamadı.'], 404);
+    }
+
+    /**
+     * Personel görevini sil → havuza geri aktarma (E5: PersonelGorev.aspx.cs gridService_RowDeleting)
+     * Eğer görev "Üretimde" durumdaysa, üretilen miktarı stoka geri ekler (E6: iptalEdilenStogaEkle)
+     */
+    public function deleteTask(Request $request, $id)
+    {
+        $personelNo = $this->personelNo($request);
+
+        $sonuc = DB::transaction(function () use ($id, $personelNo) {
+            $gorev = DB::table('tbPersonelGorev')
+                ->where('No', $id)
+                ->where('PersonelNo', $personelNo)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$gorev) {
+                return ['success' => false, 'message' => 'Görev bulunamadı.'];
+            }
+
+            $araUrunAdiNo = intval($gorev->AraUrunAdiNo);
+            $adet = intval($gorev->Adet ?? 0);
+            $bekleyenAdet = intval($gorev->BekleyenAdet ?? 0);
+            $toplam = $adet + $bekleyenAdet;
+
+            // E6: iptalEdilenStogaEkle — Üretimde iken iptal edilen miktar varsa stoktan düş
+            // ASP.NET mantığı: Adet-BekleyenAdet = üretilmiş adet, stoğa geri eklenir
+            $uretilenAdet = $adet - $bekleyenAdet;
+            if ($uretilenAdet > 0) {
+                $stok = DB::table('tbBolumAraStok')
+                    ->where('AraUrunAdiNo', $araUrunAdiNo)
+                    ->first();
+                if ($stok) {
+                    // Üretimi iptal edilen miktar stoğa geri ekleniyor
+                    DB::table('tbBolumAraStok')
+                        ->where('AraUrunAdiNo', $araUrunAdiNo)
+                        ->update(['Adet' => intval($stok->Adet) + $uretilenAdet]);
+                }
+            }
+
+            // Görevi sil
+            DB::table('tbPersonelGorev')->where('No', $id)->delete();
+
+            // E5: Havuza geri aktarma — minAraUrunUretimiDenetle ile
+            $bomService = app(\App\Services\BomService::class);
+            $bomService->minAraUrunUretimiDenetle(
+                intval($gorev->UrunIDNo ?? 0),
+                '',
+                strval($araUrunAdiNo),
+                $toplam,
+                'Personel görev iptal — havuza iade',
+                'StokHaric'
+            );
+
+            // personelGorevTabloGuncelle çağrısı
+            $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
+
+            return ['success' => true, 'message' => 'Görev silindi ve havuza geri aktarıldı.'];
+        });
+
+        return response()->json($sonuc, ($sonuc['success'] ?? false) ? 200 : 422);
+    }
+
+    /**
+     * Genel "üretimde iken iptal edilen stoğa ekle" fonksiyonu (E6).
+     * Diğer controller'lardan da çağrılabilir.
+     */
+    public static function iptalEdilenStogaEkle(int $araUrunAdiNo, int $uretilenAdet): void
+    {
+        if ($uretilenAdet <= 0) return;
+
+        $stok = DB::table('tbBolumAraStok')
+            ->where('AraUrunAdiNo', $araUrunAdiNo)
+            ->first();
+
+        if ($stok) {
+            DB::table('tbBolumAraStok')
+                ->where('AraUrunAdiNo', $araUrunAdiNo)
+                ->update(['Adet' => intval($stok->Adet) + $uretilenAdet]);
+        }
     }
 }

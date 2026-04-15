@@ -1,71 +1,179 @@
 @extends('layouts.user')
-@section('title', 'Panel - Zem Mobilya')
+
+@section('title', 'Personel Paneli')
+
+@section('page-actions')
+    <a href="{{ route('user.tasks') }}" class="btn btn-primary btn-sm">
+        <i class="bi bi-list-check me-1"></i>Gorevlerim
+    </a>
+    <a href="{{ route('user.available') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-hand-index-thumb me-1"></i>Alinabilir Isler
+    </a>
+@endsection
 
 @section('content')
-<div class="row mb-3">
-    <div class="col-12">
-        <h4><i class="bi bi-speedometer2 me-2"></i>Hoş Geldiniz, {{ Auth::user()->name ?? 'Personel' }}!</h4>
+    <div class="panel-surface">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h3 class="section-title" style="margin: 0;">Hos geldin, {{ Auth::user()->name ?? 'Personel' }}</h3>
+                <p class="section-copy">Gunluk gorev ozeti ve performans takibi</p>
+            </div>
+            <span class="soft-badge success" id="dashboardStatusPill">Hazir</span>
+        </div>
+        <div class="info-list">
+            <div class="info-row">
+                <span>Ad Soyad</span>
+                <strong>{{ trim((Auth::user()->name ?? '') . ' ' . (Auth::user()->surname ?? '')) ?: '-' }}</strong>
+            </div>
+            <div class="info-row">
+                <span>E-posta</span>
+                <strong>{{ Auth::user()->email ?? '-' }}</strong>
+            </div>
+            <div class="info-row">
+                <span>Sicil No</span>
+                <strong>{{ Auth::user()->personnel_no ?? '-' }}</strong>
+            </div>
+            <div class="info-row">
+                <span>Son veri</span>
+                <strong id="dashboardRefreshLabel">Bekleniyor</strong>
+            </div>
+        </div>
     </div>
-</div>
 
-<div class="row">
-    <div class="col-md-3">
-        <div class="card bg-primary text-white text-center p-3 mb-3">
-            <h2 id="statAktifGorev">0</h2>
-            <small>Aktif Görevlerim</small>
-            <a href="{{ route('user.tasks') }}" class="btn btn-outline-light btn-sm mt-2">Görüntüle</a>
-        </div>
+    <div class="stats-grid">
+        <article class="metric-card">
+            <p class="metric-label">Aktif Gorev</p>
+            <h3 class="metric-value" id="statAktifGorev">0</h3>
+            <div class="metric-foot">
+                <span class="soft-badge warning">Anlik</span>
+                <a href="{{ route('user.tasks') }}" class="btn btn-outline-secondary btn-sm">Listele</a>
+            </div>
+        </article>
+        <article class="metric-card">
+            <p class="metric-label">Tamamlanan</p>
+            <h3 class="metric-value" id="statTamamlanan">0</h3>
+            <div class="metric-foot">
+                <span class="soft-badge success">Biten</span>
+                <a href="{{ route('user.completed') }}" class="btn btn-outline-secondary btn-sm">Gor</a>
+            </div>
+        </article>
+        <article class="metric-card">
+            <p class="metric-label">Alinabilir Is</p>
+            <h3 class="metric-value" id="statAlinabilir">0</h3>
+            <div class="metric-foot">
+                <span class="soft-badge">Firsat</span>
+                <a href="{{ route('user.available') }}" class="btn btn-outline-secondary btn-sm">Incele</a>
+            </div>
+        </article>
+        <article class="metric-card">
+            <p class="metric-label">Bekleyen Adet</p>
+            <h3 class="metric-value" id="statBekleyen">0</h3>
+            <div class="metric-foot">
+                <span class="soft-badge dark" id="statPulseLabel">Hazir</span>
+                <a href="{{ route('user.report') }}" class="btn btn-outline-secondary btn-sm">Detay</a>
+            </div>
+        </article>
     </div>
-    <div class="col-md-3">
-        <div class="card bg-success text-white text-center p-3 mb-3">
-            <h2 id="statTamamlanan">0</h2>
-            <small>Tamamlanan</small>
-            <a href="{{ route('user.completed') }}" class="btn btn-outline-light btn-sm mt-2">Görüntüle</a>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card bg-info text-white text-center p-3 mb-3">
-            <h2 id="statAlinabilir">0</h2>
-            <small>Alınabilir Görev</small>
-            <a href="{{ route('user.available') }}" class="btn btn-outline-light btn-sm mt-2">Görüntüle</a>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card bg-warning text-dark text-center p-3 mb-3">
-            <h2 id="statBekleyen">0</h2>
-            <small>Bekleyen</small>
-        </div>
-    </div>
-</div>
 
-<div class="row">
-    <div class="col-md-8">
-        <div class="card shadow-sm mb-3">
-            <div class="card-header"><i class="bi bi-clock-history me-1"></i>Son Görevlerim</div>
-            <div class="card-body p-0">
-                <table class="table table-sm table-striped mb-0">
-                    <thead class="table-dark"><tr><th>Görev</th><th>Bölüm</th><th>Adet</th><th>Durum</th><th>Tarih</th></tr></thead>
+    <div class="content-grid">
+        <section class="panel-surface table-panel">
+            <div class="panel-toolbar">
+                <div class="panel-toolbar-copy"><h3>Son gorevlerim</h3></div>
+                <div class="panel-toolbar-meta"><span class="soft-badge">Canli</span></div>
+            </div>
+            <div class="table-shell">
+                <table class="table-modern table-sm">
+                    <thead>
+                        <tr>
+                            <th>Gorev</th>
+                            <th>Bolum</th>
+                            <th>Adet</th>
+                            <th>Durum</th>
+                            <th>Tarih</th>
+                        </tr>
+                    </thead>
                     <tbody id="sonGorevler">
-                        <tr><td colspan="5" class="text-center text-muted py-3">Henüz görev yok.</td></tr>
+                        <tr><td colspan="5" class="text-center text-muted py-3">Henuz gorev yok.</td></tr>
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <div class="stack-list">
+            <section class="panel-surface">
+                <h3 class="section-title" style="margin-bottom: 12px;">Bugun nasil ilerleyelim?</h3>
+                <div class="info-list">
+                    <div class="info-row"><span>1. Aktif gorevler</span><strong>Onceligi belirle</strong></div>
+                    <div class="info-row"><span>2. Alinabilir isler</span><strong>Akisi bos birakma</strong></div>
+                    <div class="info-row"><span>3. Rapor ekranin</span><strong>Performansini kontrol et</strong></div>
+                </div>
+            </section>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card shadow-sm mb-3">
-            <div class="card-header"><i class="bi bi-info-circle me-1"></i>Bilgilerim</div>
-            <div class="card-body small">
-                <p><strong>Ad:</strong> {{ Auth::user()->name ?? '-' }}</p>
-                <p><strong>Soyad:</strong> {{ Auth::user()->surname ?? '-' }}</p>
-                <p><strong>E-posta:</strong> {{ Auth::user()->email ?? '-' }}</p>
-                <p><strong>Sicil No:</strong> {{ Auth::user()->personnel_no ?? '-' }}</p>
-            </div>
-        </div>
-        <div class="card shadow-sm">
-            <div class="card-header"><i class="bi bi-megaphone me-1"></i>Duyurular</div>
-            <div class="card-body small text-muted">Henüz duyuru yok.</div>
-        </div>
-    </div>
-</div>
+
+    <span id="dashboardStatusLabel" style="display:none;">Hazir</span>
+    <span id="announcementBox" style="display:none;"></span>
 @endsection
+
+@push('scripts')
+<script>
+const dashboardRecentBody = document.getElementById('sonGorevler');
+
+function setDashboardRefresh(text) {
+    const label = text || new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('dashboardRefreshLabel').textContent = label;
+}
+
+function renderRecentTasks(tasks) {
+    if (!tasks.length) {
+        dashboardRecentBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Henuz gorev yok.</td></tr>';
+        return;
+    }
+    dashboardRecentBody.innerHTML = tasks.slice(0, 6).map((task) => `
+        <tr>
+            <td>${task.AraUrunAdi || task.UrunAdi || '-'}</td>
+            <td>${task.BolumAdi || '-'}</td>
+            <td>${task.BekleyenAdet ?? task.Adet ?? 0}</td>
+            <td><span class="soft-badge warning">Aktif</span></td>
+            <td>${task.GorevBaslamaTarihi || '-'}</td>
+        </tr>
+    `).join('');
+}
+
+function updateDashboardMood(stats) {
+    const activeTasks = Number(stats.aktifGorevler ?? 0);
+    const availableTasks = Number(stats.alinabilir ?? 0);
+    const pendingAmount = Number(stats.bekleyenAdet ?? 0);
+    const statusPill = document.getElementById('dashboardStatusPill');
+    const statusLabel = document.getElementById('dashboardStatusLabel');
+    const pulseLabel = document.getElementById('statPulseLabel');
+
+    if (activeTasks > 0) {
+        statusPill.textContent = 'Odak aktif'; statusPill.className = 'soft-badge warning'; statusLabel.textContent = 'Aktif tempo';
+    } else if (availableTasks > 0) {
+        statusPill.textContent = 'Yeni is hazir'; statusPill.className = 'soft-badge'; statusLabel.textContent = 'Uygun gorev var';
+    } else {
+        statusPill.textContent = 'Akis sakin'; statusPill.className = 'soft-badge success'; statusLabel.textContent = 'Hazir';
+    }
+    pulseLabel.textContent = pendingAmount > 0 ? 'Bekleyen var' : 'Bekleme yok';
+}
+
+Promise.all([
+    fetch('/api/panel/dashboard-stats').then((r) => r.json()),
+    fetch('/api/panel/my-tasks').then((r) => r.json()),
+]).then(([stats, tasks]) => {
+    setDashboardRefresh();
+    if (stats.success) {
+        document.getElementById('statAktifGorev').textContent = stats.aktifGorevler ?? 0;
+        document.getElementById('statTamamlanan').textContent = stats.tamamlanan ?? 0;
+        document.getElementById('statAlinabilir').textContent = stats.alinabilir ?? 0;
+        document.getElementById('statBekleyen').textContent = stats.bekleyenAdet ?? 0;
+        updateDashboardMood(stats);
+    }
+    renderRecentTasks(tasks.tasks || []);
+}).catch(() => {
+    setDashboardRefresh('Veri alinamadi');
+    dashboardRecentBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Gorev verileri yuklenemedi.</td></tr>';
+});
+</script>
+@endpush

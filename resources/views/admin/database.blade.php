@@ -3,21 +3,20 @@
 @section('content')
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <style>
-    body { background: #f8f6f2; font-family: 'Inter', sans-serif; color: #2b2115; }
-    .card-modern { background: #fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.08); padding: 22px; margin-bottom: 24px; }
-    .nav-tabs { border-bottom: 3px solid #d4af37; margin-bottom: 20px; }
-    .nav-tabs .nav-link { color: #3c2b1e !important; font-weight: 600; cursor: pointer; }
-    .nav-tabs .nav-link.active { background-color: #d4af37 !important; color: #fff !important; border-radius: 10px 10px 0 0; }
-    .table-modern { width: 100%; border-collapse: collapse; }
-    .table-modern th, .table-modern td { padding: 8px; border: 1px solid #ddd; vertical-align: middle; }
-    .table-modern thead th { background: #f1e3c6; color: #2b2115; border-bottom: 2px solid #e1d3b6; }
-    .btn-zem { background: linear-gradient(90deg, #70421e, #5a3317); color: #fff; border-radius: 8px; transition: 0.2s; border: none; padding: 6px 14px;}
-    .btn-zem:hover { transform: scale(1.05); color: #fff; }
-    .filter-area { display: flex; justify-content: space-between; margin-bottom: 15px; }
+    /* Database Admin - Minimal UI */
+    .nav-tabs { border-bottom: 2px solid var(--z-border); margin-bottom: 20px; }
+    .nav-tabs .nav-link { color: var(--z-text-secondary) !important; font-weight: 600; cursor: pointer; border: none; background: transparent; padding: 10px 20px; transition: 0.2s; border-radius: 0; }
+    .nav-tabs .nav-link:hover { color: var(--z-text) !important; }
+    .nav-tabs .nav-link.active { color: var(--z-accent) !important; border-bottom: 2px solid var(--z-accent); background: transparent !important; }
+    
+    .filter-area { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+    .filter-area h4 { font-size: 1.1rem; font-weight: 700; color: var(--z-text); margin: 0; }
+    
+    .table-responsive { border-radius: var(--z-radius); border: 1px solid var(--z-border); overflow-x: auto; }
 </style>
 
-<div class="card-modern">
-   <h2>Veritabanı Yönetimi</h2>
+<div class="panel-surface">
+   <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 16px; color: var(--z-text);">Veritabanı Yönetimi</h2>
    
    <ul class="nav nav-tabs" id="veritabaniTabs">
        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabPersonel">👷 Personeller</button></li>
@@ -40,7 +39,7 @@
              </div>
              <div class="table-responsive">
                  <table class="table table-modern table-hover align-middle">
-                     <thead><tr><th>No</th><th>Ad</th><th>Soyad</th><th>Adres</th><th>Telefon</th><th>Mail</th><th>Bölüm</th><th>İşlemler</th></tr></thead>
+                     <thead><tr><th>No</th><th>Ad</th><th>Soyad</th><th>Adres</th><th>Telefon</th><th>Mail</th><th>Şifre</th><th>Bölüm</th><th>İşlemler</th></tr></thead>
                      <tbody id="tbody-personnel"></tbody>
                      <tfoot>
                          <tr class="bg-light">
@@ -50,6 +49,7 @@
                              <td><input type="text" id="new-p-address" class="form-control form-control-sm"></td>
                              <td><input type="text" id="new-p-phone" class="form-control form-control-sm"></td>
                              <td><input type="text" id="new-p-email" class="form-control form-control-sm"></td>
+                             <td><input type="text" id="new-p-password" class="form-control form-control-sm" placeholder="Varsayılan: 123"></td>
                              <td><select id="new-p-dept" class="form-select form-select-sm dd-dept"></select></td>
                              <td><button class="btn btn-primary btn-sm" onclick="saveData('personnel', null)"><i class="bi bi-plus"></i> Ekle</button></td>
                          </tr>
@@ -189,6 +189,7 @@
                         <td><input type="text" id="edit-p-address-${item.id}" class="form-control form-control-sm" value="${item.address}"></td>
                         <td><input type="text" id="edit-p-phone-${item.id}" class="form-control form-control-sm" value="${item.phone}"></td>
                         <td><input type="text" id="edit-p-email-${item.id}" class="form-control form-control-sm" value="${item.email}"></td>
+                        <td><input type="text" id="edit-p-password-${item.id}" class="form-control form-control-sm" placeholder="Yeni (Boş=Değişmez)"></td>
                         <td><select id="edit-p-dept-${item.id}" class="form-select form-select-sm dd-dept"></select></td>
                         <td>
                             <button class="btn btn-success btn-sm btn-icon" onclick="saveData('${module}', ${item.id})"><i class="bi bi-save2"></i></button>
@@ -234,7 +235,7 @@
             } else {
                 // VIEW MODE
                 if(module === 'personnel') {
-                    tr.innerHTML = `<td>${item.id}</td><td>${item.name}</td><td>${item.surname || ''}</td><td>${item.address || ''}</td><td>${item.phone || ''}</td><td>${item.email}</td><td>${item.department_name}</td>`;
+                    tr.innerHTML = `<td>${item.id}</td><td>${item.name}</td><td>${item.surname || ''}</td><td>${item.address || ''}</td><td>${item.phone || ''}</td><td>${item.email}</td><td>***</td><td>${item.department_name}</td>`;
                 } else if(module === 'departments') {
                     tr.innerHTML = `<td>${item.id}</td><td>${item.name}</td>`;
                 } else if(module === 'components') {
@@ -285,6 +286,7 @@
                 address: document.getElementById(id ? `edit-p-address-${id}` : 'new-p-address').value,
                 phone: document.getElementById(id ? `edit-p-phone-${id}` : 'new-p-phone').value,
                 email: document.getElementById(id ? `edit-p-email-${id}` : 'new-p-email').value,
+                new_password: document.getElementById(id ? `edit-p-password-${id}` : 'new-p-password').value,
                 department_id: document.getElementById(id ? `edit-p-dept-${id}` : 'new-p-dept').value
             };
         } else if(module === 'departments') {

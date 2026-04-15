@@ -10,7 +10,7 @@ class Task extends Model
 
     protected $fillable = [
         'UrunIDNo', 'PersonelNo', 'Adet', 'BekleyenAdet', 'Onay',
-        'AraUrunAdiNo', 'BolumAdiNo', 'GorevTarihi'
+        'AraUrunAdiNo', 'BolumAdiNo', 'GorevBaslamaTarihi'
     ];
 
     public function personnel()

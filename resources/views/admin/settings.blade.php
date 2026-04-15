@@ -2,13 +2,16 @@
 @section('title', 'Ayarlar - ZemMobilya')
 
 @section('content')
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0"><i class="bi bi-sliders me-2"></i>Sistem Ayarları</h4>
+<div class="orders-panel-heading mb-4">
+    <div>
+        <p>Yonetim</p>
+        <h3><i class="bi bi-sliders text-muted me-2"></i>Sistem Ayarları</h3>
+    </div>
 </div>
 <div class="row">
     <div class="col-md-6">
-        <div class="card shadow-sm mb-3">
-            <div class="card-header bg-primary text-white">Genel Ayarlar</div>
+        <div class="panel-surface mb-3">
+            <h6 class="mb-3 fw-bold text-primary">Genel Ayarlar</h6>
             <div class="card-body">
                 <div class="mb-3">
                     <label class="form-label">Firma Adı</label>
@@ -22,8 +25,8 @@
         </div>
     </div>
     <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-header bg-secondary text-white">Bakım İşlemleri</div>
+        <div class="panel-surface">
+            <h6 class="mb-3 fw-bold text-secondary">Bakım İşlemleri</h6>
             <div class="card-body">
                 <button class="btn btn-outline-warning btn-sm mb-2 w-100" onclick="clearCache()"><i class="bi bi-trash me-1"></i>Önbellek Temizle</button>
                 <button class="btn btn-outline-info btn-sm w-100" onclick="alert('Veritabanı yedekleme yakında aktif olacak.')"><i class="bi bi-database-down me-1"></i>Veritabanı Yedekle</button>
@@ -37,7 +40,18 @@
 <script>
 function clearCache() {
     if (confirm('Önbelleği temizlemek istediğinize emin misiniz?')) {
-        alert('Önbellek temizlendi!');
+        fetch('/api/admin/clear-cache', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                'Accept': 'application/json'
+            }
+        })
+        .then(r => r.json())
+        .then(data => {
+            alert(data.message || 'Önbellek temizlendi!');
+        })
+        .catch(e => alert('Hata oluştu!'));
     }
 }
 </script>

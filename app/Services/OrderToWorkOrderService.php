@@ -10,11 +10,13 @@ use Illuminate\Support\Facades\DB;
  */
 class OrderToWorkOrderService
 {
+    protected WorkOrderService $workOrderService;
     protected BomService $bomService;
 
-    public function __construct(BomService $bomService)
+    public function __construct(BomService $bomService, WorkOrderService $workOrderService)
     {
         $this->bomService = $bomService;
+        $this->workOrderService = $workOrderService;
     }
 
     /**
@@ -55,6 +57,9 @@ class OrderToWorkOrderService
                         'EslesenUrunNo' => $refItem->EslesenUrunNo,
                         'EslesenUrunTur' => $refItem->EslesenUrunTur,
                         'EslesmeYontemi' => $refItem->EslesmeYontemi,
+                        'SetMi' => 0,
+                        'SetNo' => null,
+                        'AnaSetSatirNo' => null,
                         'YuklemeTarihi' => now(),
                     ], 'No');
                     $satirNolar[] = $newNo;
@@ -91,82 +96,28 @@ class OrderToWorkOrderService
                 $sistemUrunAdi = '';
 
                 if ($eslesenUrunTur === 'Nihai') {
-                    $product = DB::table('tbUrunler')->where('No', $eslesenUrunNo)->first();
-                    if (!$product) {
-                        $failed++;
-                        $errors[] = "Ürün bulunamadı: {$item->UrunAdi}";
-                        continue;
-                    }
-
-                    $sistemUrunAdi = $product->SistemAdi ?? $product->UrunID ?? '';
-
-                    // AraAdlarYol'dan BOM yolu çıkar
-                    $araAdlarYol = trim($product->AraAdlarYol ?? '');
-                    if (empty($araAdlarYol)) {
-                        $failed++;
-                        $errors[] = "BOM yolu (AraAdlarYol) boş: {$item->UrunAdi}";
-                        continue;
-                    }
-
-                    // Top-level ara ürünü bul ve yol hesapla
-                    // AraAdlarYol: "Kumaş Kesim→Ahşap Profil→Montaj"
-                    $adimlar = preg_split('/[→>]|->/', $araAdlarYol);
-                    $topAraUrunNo = null;
-                    foreach ($adimlar as $adim) {
-                        $araUrunAdi = trim($adim);
-                        if (empty($araUrunAdi)) continue;
-                        $araUrun = DB::table('tbAraUrun')->where('AraUrunAdi', $araUrunAdi)->first();
-                        if ($araUrun) {
-                            $topAraUrunNo = $araUrun->No;
-                            break;
-                        }
-                    }
-
-                    if ($topAraUrunNo) {
-                        $yol = $this->bomService->tumYolHazirla(strval($topAraUrunNo));
-                        $this->bomService->isEmriVerRecursive(
-                            strval($topAraUrunNo),
-                            intval($item->Adet),
-                            '', // açıklama
-                            $yol,
-                            $eslesenUrunNo,
-                            $stokDurum,
-                            $tamponDusumleri
-                        );
-                    }
-
-                    // tbGorevler'e ana kayıt oluştur
-                    $gorevNo = DB::table('tbGorevler')->insertGetId([
-                        'UrunIDNo' => $eslesenUrunNo,
-                        'ToplamAdet' => $item->Adet,
-                        'GorevBaslamaTarihi' => now(),
-                        'PersonelNo' => null,
-                    ], 'No');
-
+                    $result = $this->workOrderService->createWorkOrderForProduct(
+                        $eslesenUrunNo,
+                        intval($item->Adet),
+                        $stokDurum
+                    );
                 } else {
-                    // Ara ürün doğrudan
-                    $araUrun = DB::table('tbAraUrun')->where('No', $eslesenUrunNo)->first();
-                    $sistemUrunAdi = $araUrun->AraUrunAdi ?? '';
-                    $bolumAdiNo = intval($araUrun->BolumAdiNo ?? 0);
-
-                    // Havuza ekle
-                    DB::table('tbBolumHavuz')->insert([
-                        'UrunIDNo' => 0,
-                        'AraUrunAdiNo' => $eslesenUrunNo,
-                        'ToplamAdet' => $item->Adet,
-                        'Adet' => $item->Adet,
-                        'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
-                        'GorevBaslangicTarihi' => now(),
-                    ]);
-
-                    $gorevNo = DB::table('tbGorevler')->insertGetId([
-                        'UrunIDNo' => 0,
-                        'ToplamAdet' => $item->Adet,
-                        'GorevBaslamaTarihi' => now(),
-                        'PersonelNo' => null,
-                        'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
-                    ], 'No');
+                    $result = $this->workOrderService->createWorkOrderForComponent(
+                        $eslesenUrunNo,
+                        intval($item->Adet),
+                        $stokDurum
+                    );
                 }
+
+                if (!($result['success'] ?? false)) {
+                    $failed++;
+                    $errors[] = $result['message'] ?? "İş emri oluşturulamadı: {$item->UrunAdi}";
+                    continue;
+                }
+
+                $tamponDusumleri = $result['tamponDusumleri'] ?? [];
+                $gorevNo = intval($result['gorevNo'] ?? 0);
+                $sistemUrunAdi = $result['sistemUrunAdi'] ?? '';
 
                 if ($gorevNo > 0) {
                     // Sipariş satırını güncelle

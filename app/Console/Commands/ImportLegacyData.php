@@ -52,14 +52,40 @@ class ImportLegacyData extends Command
     private function readCsv(string $file): array
     {
         if (!file_exists($file)) return [];
-        $data = array_map('str_getcsv', file($file));
+        $lines = array_map(function ($line) {
+            return $this->normalizeEncoding($line);
+        }, file($file));
+        $data = array_map('str_getcsv', $lines);
         if (empty($data)) return [];
-        $header = array_shift($data);
+        $header = array_map(fn($value) => $this->normalizeEncoding((string) $value), array_shift($data));
         $header[0] = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $header[0]); // BOM Fix
         return array_map(function($row) use ($header) {
             if(count($row) < count($header)) $row = array_pad($row, count($header), null);
+            $row = array_map(fn($value) => $value === null ? null : $this->normalizeEncoding((string) $value), $row);
             return array_combine($header, $row);
         }, $data);
+    }
+
+    private function normalizeEncoding(string $value): string
+    {
+        if ($value === '') {
+            return $value;
+        }
+
+        foreach (['UTF-8', 'Windows-1254', 'ISO-8859-9', 'Windows-1252', 'ISO-8859-1'] as $encoding) {
+            $converted = @iconv($encoding, 'UTF-8//IGNORE', $value);
+            if ($converted === false || $converted === '') {
+                continue;
+            }
+
+            if ($encoding === 'UTF-8' && !mb_check_encoding($value, 'UTF-8')) {
+                continue;
+            }
+
+            return $converted;
+        }
+
+        return mb_convert_encoding($value, 'UTF-8', 'UTF-8');
     }
 
     private function importDepartments(string $file) {

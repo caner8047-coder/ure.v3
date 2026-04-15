@@ -14,7 +14,7 @@ class DepartmentStock extends Model
 
     public function department()
     {
-        return $this->belongsTo(Department::class, 'BolumAdiNo', 'bolum_no');
+        return $this->belongsTo(Department::class, 'BolumAdiNo', 'No');
     }
 
     public function component()

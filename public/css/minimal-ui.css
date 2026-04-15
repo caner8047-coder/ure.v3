@@ -1,0 +1,2619 @@
+/* ═══════════════════════════════════════════════════════
+   Zemuretim V3 — Minimal Production UI
+   Clean, flat, data-focused design system
+   ═══════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ─── Design Tokens ─── */
+:root {
+    --z-bg: #f4f5f7;
+    --z-bg-card: #ffffff;
+    --z-bg-soft: #f0f1f3;
+    --z-bg-input: #f7f8fa;
+    --z-sidebar: #1a1d23;
+    --z-sidebar-hover: rgba(255,255,255,0.06);
+    --z-sidebar-active: rgba(255,255,255,0.1);
+    --z-sidebar-border: rgba(255,255,255,0.08);
+    --z-text: #1a1d23;
+    --z-text-secondary: #6b7280;
+    --z-text-muted: #9ca3af;
+    --z-border: #e5e7eb;
+    --z-border-light: #f0f1f3;
+    --z-accent: #0d9488;
+    --z-accent-hover: #0f766e;
+    --z-accent-soft: rgba(13,148,136,0.08);
+    --z-success: #059669;
+    --z-success-soft: rgba(5,150,105,0.08);
+    --z-warning: #d97706;
+    --z-warning-soft: rgba(217,119,6,0.08);
+    --z-danger: #dc2626;
+    --z-danger-soft: rgba(220,38,38,0.08);
+    --z-radius: 10px;
+    --z-radius-sm: 6px;
+    --z-radius-lg: 14px;
+    --z-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+    --z-shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
+    --z-transition: 0.15s ease;
+    --z-sidebar-width: 240px;
+    --z-sidebar-narrow: 64px;
+
+    /* ─── Backward compat: --crm-* aliases ─── */
+    --crm-bg: var(--z-bg);
+    --crm-card: var(--z-bg-card);
+    --crm-text: var(--z-text);
+    --crm-muted: var(--z-text-muted);
+    --crm-border: var(--z-border);
+    --crm-accent: var(--z-accent);
+    --crm-success: var(--z-success);
+    --crm-warning: var(--z-warning);
+    --crm-danger: var(--z-danger);
+    --crm-shadow-soft: var(--z-shadow);
+}
+
+/* ─── Reset & Base ─── */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd {
+    margin: 0;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--z-bg);
+    color: var(--z-text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    color: var(--z-text);
+    line-height: 1.3;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ─── Shell Layout ─── */
+.ui-shell { position: relative; }
+
+.crm-shell {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.crm-sidebar {
+    background: var(--z-sidebar);
+    color: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    flex-shrink: 0;
+    width: var(--z-sidebar-narrow);
+    z-index: 100;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    border-right: 1px solid rgba(255,255,255,0.05);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+}
+
+.crm-shell.sidebar-expanded .crm-sidebar {
+    width: var(--z-sidebar-width);
+    cursor: default;
+}
+
+.crm-sidebar::-webkit-scrollbar { width: 0; }
+
+.crm-sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 14px;
+    border-bottom: 1px solid var(--z-sidebar-border);
+    white-space: nowrap;
+}
+
+.crm-sidebar-logo {
+    width: 36px;
+    height: 36px;
+    background: var(--z-accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: white;
+    flex-shrink: 0;
+}
+
+.crm-sidebar-copy h1,
+.crm-sidebar-copy h2 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0;
+    color: #f3f4f6;
+    opacity: 0;
+    transition: opacity 0.2s 0.1s;
+}
+
+.crm-shell.sidebar-expanded .crm-sidebar-copy h1,
+.crm-shell.sidebar-expanded .crm-sidebar-copy h2 {
+    opacity: 1;
+}
+
+.crm-sidebar-copy p {
+    font-size: 0.7rem;
+    color: #6b7280;
+    margin-top: 2px;
+    display: none;
+}
+
+/* Navigation */
+.crm-nav-group {
+    padding: 16px 12px 4px;
+}
+
+.crm-nav-group-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b7280;
+    padding: 0 8px 8px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.2s 0.1s;
+}
+
+.crm-shell.sidebar-expanded .crm-nav-group-label {
+    opacity: 1;
+}
+
+.crm-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.crm-nav-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    color: #9ca3af;
+    font-weight: 500;
+    font-size: 0.82rem;
+    transition: all var(--z-transition);
+    white-space: nowrap;
+}
+
+.crm-nav-link span {
+    opacity: 0;
+    transition: opacity 0.2s 0.1s;
+}
+
+.crm-shell.sidebar-expanded .crm-nav-link span {
+    opacity: 1;
+}
+
+.crm-nav-link i {
+    font-size: 1rem;
+    width: 20px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+.crm-nav-link:hover {
+    background: var(--z-sidebar-hover);
+    color: #e5e7eb;
+}
+
+.crm-nav-link.active {
+    background: var(--z-sidebar-active);
+    color: #ffffff;
+}
+
+.crm-nav-link.active i {
+    color: var(--z-accent);
+    opacity: 1;
+}
+
+.crm-nav-hint { display: none; }
+
+/* Sidebar Footer — hide */
+.crm-sidebar-footer {
+    margin-top: auto;
+    padding: 12px;
+    display: none;
+}
+
+.crm-sidebar-card { display: none; }
+
+/* Sidebar Toggle (mobile) */
+.crm-sidebar-toggle {
+    display: flex;
+    border: none;
+    background: none;
+    font-size: 1.25rem;
+    color: var(--z-text);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+}
+
+.crm-sidebar-toggle:hover {
+    background: var(--z-bg-soft);
+}
+
+.crm-sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99;
+}
+
+/* ─── Main Area ─── */
+.crm-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ─── Topbar ─── */
+.crm-topbar {
+    background: var(--z-bg-card);
+    border-bottom: 1px solid var(--z-border);
+    padding: 0 28px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    width: 100%;
+    min-width: 0;
+}
+
+.crm-topbar-title .crm-eyebrow { display: none; }
+.crm-page-subtitle { display: none; }
+
+.crm-page-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--z-text);
+}
+
+.crm-topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.crm-user-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: var(--z-bg-soft);
+    border-radius: 20px;
+    font-weight: 500;
+    font-size: 0.8rem;
+    border: 1px solid var(--z-border);
+}
+
+.crm-user-pill i { font-size: 1rem; color: var(--z-text-secondary); }
+
+.crm-role-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.crm-role-badge.admin {
+    background: var(--z-danger-soft);
+    color: var(--z-danger);
+}
+
+.crm-role-badge.user {
+    background: var(--z-bg-soft);
+    color: var(--z-text-secondary);
+}
+
+/* ─── Page Content ─── */
+.crm-page {
+    padding: 24px 28px 40px;
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+}
+
+/* ─── Buttons ─── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--z-radius-sm);
+    font-weight: 500;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all var(--z-transition);
+    border: 1px solid transparent;
+    font-family: inherit;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+}
+
+.btn-primary {
+    background: var(--z-accent);
+    color: white;
+    border-color: var(--z-accent);
+}
+
+.btn-primary:hover {
+    background: var(--z-accent-hover);
+    border-color: var(--z-accent-hover);
+}
+
+.btn-outline-secondary {
+    background: var(--z-bg-card);
+    border-color: var(--z-border);
+    color: var(--z-text);
+}
+
+.btn-outline-secondary:hover {
+    background: var(--z-bg-soft);
+    border-color: #d1d5db;
+}
+
+.btn-success { background: var(--z-success); color: white; border-color: var(--z-success); }
+.btn-success:hover { background: #047857; }
+.btn-danger { background: var(--z-danger); color: white; border-color: var(--z-danger); }
+.btn-danger:hover { background: #b91c1c; }
+.btn-warning { background: var(--z-warning); color: white; border-color: var(--z-warning); }
+.btn-outline-danger { background: var(--z-bg-card); border-color: var(--z-danger); color: var(--z-danger); }
+.btn-outline-danger:hover { background: var(--z-danger-soft); }
+.btn-outline-success { background: var(--z-bg-card); border-color: var(--z-success); color: var(--z-success); }
+.btn-outline-success:hover { background: var(--z-success-soft); }
+.btn-outline-warning { background: var(--z-bg-card); border-color: var(--z-warning); color: var(--z-warning); }
+.btn-outline-warning:hover { background: var(--z-warning-soft); }
+
+/* ─── Cards & Panels ─── */
+.panel-surface, .card {
+    background: var(--z-bg-card);
+    border-radius: var(--z-radius-lg);
+    border: 1px solid var(--z-border);
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.panel-surface:hover, .card:hover {
+    box-shadow: none;
+}
+
+/* Section Headers — simplified */
+.section-header {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.section-header.compact { margin-bottom: 14px; }
+
+.section-overline {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    color: var(--z-accent);
+    margin-bottom: 2px;
+}
+
+.section-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.section-copy {
+    font-size: 0.8rem;
+    color: var(--z-text-secondary);
+    margin-top: 2px;
+}
+
+/* ─── Dashboard Hero — Simplified ─── */
+.dashboard-hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.hero-banner {
+    background: var(--z-bg-card);
+    border-color: var(--z-border);
+    padding: 20px;
+}
+
+.hero-banner::after { display: none; }
+
+.hero-kicker {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--z-accent);
+    background: var(--z-accent-soft);
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.hero-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-bottom: 6px;
+    color: var(--z-text);
+}
+
+.hero-description {
+    font-size: 0.82rem;
+    color: var(--z-text-secondary);
+    max-width: none;
+    margin: 0;
+}
+
+.hero-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.mini-metric {
+    background: var(--z-bg-soft);
+    border: 1px solid var(--z-border-light);
+    padding: 10px 14px;
+    border-radius: var(--z-radius);
+    min-width: 120px;
+    flex: 1;
+}
+
+.mini-metric span {
+    font-size: 0.68rem;
+    color: var(--z-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: block;
+}
+
+.mini-metric strong {
+    font-size: 1rem;
+    font-weight: 600;
+    display: block;
+    margin-top: 2px;
+    color: var(--z-text);
+}
+
+/* ─── Stats Grid (Metric Cards) — Compact ─── */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.metric-card {
+    background: var(--z-bg-card);
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.metric-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--z-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+    color: var(--z-text);
+    line-height: 1.2;
+}
+
+.metric-copy {
+    font-size: 0.75rem;
+    color: var(--z-text-muted);
+    margin-top: 4px;
+}
+
+.metric-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--z-border-light);
+}
+
+/* ─── Info Rows ─── */
+.info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: 8px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--z-border-light);
+    font-size: 0.82rem;
+}
+
+.info-row:last-child { border-bottom: none; }
+
+.info-row span { color: var(--z-text-secondary); }
+.info-row strong { font-weight: 600; color: var(--z-text); }
+
+/* ─── Content Grid (2-col layouts) ─── */
+.content-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.stack-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.muted-copy {
+    font-size: 0.82rem;
+    color: var(--z-text-secondary);
+}
+
+/* ─── Tables ─── */
+.table-panel {
+    padding: 0;
+    overflow: hidden;
+}
+
+.panel-toolbar {
+    padding: 14px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--z-border);
+    background: var(--z-bg-soft);
+}
+
+.panel-toolbar-copy p {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--z-text-muted);
+    margin-bottom: 1px;
+}
+
+.panel-toolbar-copy h3 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.panel-toolbar-meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.table-shell {
+    overflow-x: auto;
+}
+
+.table-modern {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-modern th {
+    background: var(--z-bg-card);
+    padding: 10px 16px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--z-text-secondary);
+    text-align: left;
+    border-bottom: 1px solid var(--z-border);
+    white-space: nowrap;
+}
+
+.table-modern td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--z-border-light);
+    font-size: 0.84rem;
+    background: var(--z-bg-card);
+    vertical-align: middle;
+}
+
+.table-modern tr:hover td {
+    background: var(--z-bg-soft);
+}
+
+.table-modern tr:last-child td {
+    border-bottom: none;
+}
+
+/* bootstrap table compat */
+.table { width: 100%; border-collapse: collapse; }
+.table th { padding: 10px 16px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; color: var(--z-text-secondary); text-align: left; border-bottom: 1px solid var(--z-border); }
+.table td { padding: 10px 16px; border-bottom: 1px solid var(--z-border-light); font-size: 0.84rem; vertical-align: middle; }
+.table-bordered th, .table-bordered td { border: 1px solid var(--z-border); }
+.table-hover tbody tr:hover td { background: var(--z-bg-soft); }
+.table-dark th { background: var(--z-sidebar); color: #e5e7eb; border-color: rgba(255,255,255,0.1); }
+.table-responsive { overflow-x: auto; }
+
+/* ─── Badges ─── */
+.badge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+    display: inline-flex;
+    align-items: center;
+}
+
+.soft-badge {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.72rem;
+    background: var(--z-bg-soft);
+    color: var(--z-text-secondary);
+    display: inline-flex;
+    align-items: center;
+}
+
+.soft-badge.success { background: var(--z-success-soft); color: var(--z-success); }
+.soft-badge.warning { background: var(--z-warning-soft); color: var(--z-warning); }
+.soft-badge.danger { background: var(--z-danger-soft); color: var(--z-danger); }
+.soft-badge.dark { background: var(--z-sidebar); color: white; }
+.soft-badge.primary { background: var(--z-accent-soft); color: var(--z-accent); }
+
+.badge.bg-secondary, .badge.text-bg-secondary {
+    background: var(--z-bg-soft) !important;
+    color: var(--z-text) !important;
+    border: 1px solid var(--z-border);
+}
+
+/* ─── Forms ─── */
+.form-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--z-text);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.form-control, .form-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius-sm);
+    background: var(--z-bg-input);
+    font-family: inherit;
+    font-size: 0.84rem;
+    color: var(--z-text);
+    transition: all var(--z-transition);
+}
+
+.form-control:focus, .form-select:focus {
+    outline: none;
+    background: var(--z-bg-card);
+    border-color: var(--z-accent);
+    box-shadow: 0 0 0 2px var(--z-accent-soft);
+}
+
+.form-control-sm, .form-select-sm {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
+
+.form-check-input {
+    accent-color: var(--z-accent);
+}
+
+/* ─── Alerts ─── */
+.alert {
+    padding: 10px 14px;
+    border-radius: var(--z-radius-sm);
+    font-size: 0.84rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    border: 1px solid;
+}
+
+.alert-info { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+.alert-success { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.alert-warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.alert-danger { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+
+/* ─── Modals ─── */
+.modal-content {
+    background: var(--z-bg-card);
+    border-radius: var(--z-radius-lg);
+    border: 1px solid var(--z-border);
+    box-shadow: var(--z-shadow-hover);
+    padding: 0;
+}
+
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--z-border);
+}
+
+.modal-header .modal-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.modal-body { padding: 16px 20px; }
+
+.modal-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--z-border);
+}
+
+.btn-close {
+    opacity: 0.5;
+    transition: opacity var(--z-transition);
+}
+
+.btn-close:hover { opacity: 1; }
+
+/* ─── Auth Pages ─── */
+.auth-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+    background: var(--z-bg);
+}
+
+.auth-panel {
+    width: 100%;
+    max-width: 400px;
+    background: var(--z-bg-card);
+    border-radius: var(--z-radius-lg);
+    border: 1px solid var(--z-border);
+    padding: 32px;
+    box-shadow: var(--z-shadow);
+}
+
+/* ─── Tabs (Planning etc.) ─── */
+.nav-tabs, .planning-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    border: none;
+}
+
+.nav-tabs .nav-link, .planning-tabs .nav-link {
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius-sm);
+    padding: 8px 14px;
+    background: var(--z-bg-card);
+    color: var(--z-text-secondary);
+    font-weight: 500;
+    font-size: 0.82rem;
+    transition: all var(--z-transition);
+}
+
+.nav-tabs .nav-link:hover, .planning-tabs .nav-link:hover {
+    background: var(--z-bg-soft);
+    color: var(--z-text);
+}
+
+.nav-tabs .nav-link.active, .planning-tabs .nav-link.active {
+    background: var(--z-accent);
+    color: white;
+    border-color: var(--z-accent);
+    box-shadow: none;
+}
+
+/* ─── Pagination ─── */
+.page-number, .stocks-page-number, .report-page-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 32px;
+    margin: 0 2px;
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius-sm);
+    background: var(--z-bg-card);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--z-text);
+    transition: all var(--z-transition);
+}
+
+.page-number:hover, .stocks-page-number:hover, .report-page-box:hover:not(:disabled) {
+    background: var(--z-bg-soft);
+    border-color: #d1d5db;
+}
+
+.page-number.active, .stocks-page-number.active, .report-page-box.active {
+    background: var(--z-accent);
+    color: white;
+    border-color: var(--z-accent);
+}
+
+.page-nav-btn { min-width: 36px; }
+
+.report-page-box:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.stocks-ellipsis, .report-page-numbers {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* ─── Bootstrap Utility Overrides ─── */
+.text-muted { color: var(--z-text-secondary) !important; }
+.text-center { text-align: center; }
+.text-start { text-align: left; }
+.text-end { text-align: right; }
+.text-success { color: var(--z-success) !important; }
+.text-danger { color: var(--z-danger) !important; }
+.text-warning { color: var(--z-warning) !important; }
+.text-primary { color: var(--z-accent) !important; }
+
+.fw-bold, .fw-700 { font-weight: 700 !important; }
+.small { font-size: 0.8rem; }
+.py-3 { padding-top: 12px; padding-bottom: 12px; }
+.py-4 { padding-top: 16px; padding-bottom: 16px; }
+.mb-0 { margin-bottom: 0 !important; }
+.mb-3 { margin-bottom: 12px; }
+.mb-4 { margin-bottom: 16px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.me-1 { margin-right: 4px; }
+.me-2 { margin-right: 8px; }
+.ms-1 { margin-left: 4px; }
+.ps-3 { padding-left: 12px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.w-100 { width: 100%; }
+
+.d-flex { display: flex; }
+.d-inline { display: inline; }
+.d-none { display: none; }
+.d-block { display: block; }
+.flex-wrap { flex-wrap: wrap; }
+.align-items-center { align-items: center; }
+.align-items-start { align-items: flex-start; }
+.align-items-end { align-items: flex-end; }
+.justify-content-between { justify-content: space-between; }
+.justify-content-end { justify-content: flex-end; }
+
+/* ─── Row/Col Grid (bootstrap compat) ─── */
+.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
+.row > [class*="col"] { padding: 0 8px; }
+.col-md-3 { flex: 0 0 25%; max-width: 25%; }
+.col-md-4 { flex: 0 0 33.33%; max-width: 33.33%; }
+.col-md-6 { flex: 0 0 50%; max-width: 50%; }
+.col-md-12 { flex: 0 0 100%; max-width: 100%; }
+.col-xl-2 { flex: 0 0 16.67%; max-width: 16.67%; }
+.col-xl-3 { flex: 0 0 25%; max-width: 25%; }
+.col-xl-4 { flex: 0 0 33.33%; max-width: 33.33%; }
+.g-3 { gap: 12px; }
+
+.card-body { padding: 16px; }
+.card-title { font-size: 0.88rem; font-weight: 600; margin-bottom: 6px; }
+.card-text { margin-bottom: 0; }
+.fs-2 { font-size: 1.5rem !important; }
+
+.bg-primary { background: var(--z-accent) !important; }
+.bg-success { background: var(--z-success) !important; }
+.bg-warning { background: var(--z-warning) !important; }
+.bg-danger { background: var(--z-danger) !important; }
+.text-white { color: white !important; }
+.text-dark { color: var(--z-text) !important; }
+.shadow-sm { box-shadow: var(--z-shadow); }
+.border-0 { border: 0 !important; }
+
+.form-check { display: flex; align-items: center; gap: 6px; }
+.form-check-label { font-size: 0.82rem; }
+
+.tab-content > .tab-pane { display: none; }
+.tab-content > .tab-pane.show.active { display: block; }
+
+/* ─── Responsive ─── */
+
+/* === Tablet (≤1024px) === */
+@media (max-width: 1024px) {
+    .crm-sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 100vh;
+        z-index: 1000;
+        width: var(--z-sidebar-width);
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: none;
+        cursor: default;
+    }
+
+    .crm-sidebar-copy h1,
+    .crm-sidebar-copy h2,
+    .crm-nav-group-label,
+    .crm-nav-link span {
+        opacity: 1;
+    }
+
+    .crm-shell.sidebar-open .crm-sidebar {
+        transform: translateX(0);
+        box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+    }
+
+    .crm-shell.sidebar-open .crm-sidebar-backdrop {
+        display: block;
+    }
+
+    .crm-main {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .crm-topbar {
+        padding: 0 16px;
+    }
+
+    .crm-page {
+        padding: 16px;
+    }
+
+    .dashboard-hero {
+        grid-template-columns: 1fr;
+    }
+
+    .content-grid {
+        grid-template-columns: 1fr;
+    }
+
+    /* Force all grid columns to stack */
+    .col-md-3, .col-md-4, .col-md-6, .col-md-12,
+    .col-xl-2, .col-xl-3, .col-xl-4 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+
+    .hero-stats {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .mini-metric { min-width: unset; }
+
+    /* Stats grid: 2 columns on tablet */
+    .stats-grid,
+    .stats-grid[style*="grid-template-columns"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* Row grid: stack on tablet */
+    .row {
+        margin: 0 -4px;
+    }
+
+    .row > [class*="col"] {
+        padding: 0 4px;
+        margin-bottom: 8px;
+    }
+
+    /* Tabs: horizontal scroll */
+    .nav-tabs, .planning-tabs,
+    ul.nav.planning-tabs,
+    .nav-tabs[style],
+    .planning-tabs[style] {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        padding-bottom: 2px;
+    }
+
+    .nav-tabs::-webkit-scrollbar,
+    .planning-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-tabs .nav-link, .planning-tabs .nav-link {
+        white-space: nowrap;
+        flex-shrink: 0;
+        font-size: 0.78rem;
+        padding: 7px 12px;
+    }
+
+    /* Panel toolbar: compact */
+    .panel-toolbar {
+        padding: 10px 14px;
+        flex-direction: column;
+        gap: 8px;
+        align-items: flex-start;
+    }
+
+    .panel-toolbar-meta {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    /* Table shell: better scroll containment */
+    .table-shell {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -1px;
+    }
+
+    /* Table cells: smaller on tablet */
+    .table-modern th, .table th {
+        padding: 8px 10px;
+        font-size: 0.68rem;
+    }
+
+    .table-modern td, .table td {
+        padding: 8px 10px;
+        font-size: 0.8rem;
+    }
+
+    /* Section header: stack */
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    /* Pagination containers */
+    .pool-pager, .stocks-pager {
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 14px;
+    }
+}
+
+/* === Mobile Large (≤768px) === */
+@media (max-width: 768px) {
+    .crm-page {
+        padding: 12px;
+    }
+
+    .crm-topbar {
+        padding: 0 12px;
+        height: 50px;
+    }
+
+    .crm-page-title {
+        font-size: 0.88rem;
+    }
+
+    /* Filter row grid: full width stacking */
+    .row.g-3 {
+        gap: 8px !important;
+    }
+
+    /* Panels: less padding */
+    .panel-surface, .card {
+        padding: 14px;
+        border-radius: var(--z-radius);
+    }
+
+    /* Table panel: no outer padding */
+    .table-panel {
+        padding: 0;
+    }
+
+    /* Smaller buttons */
+    .btn {
+        padding: 6px 10px;
+        font-size: 0.78rem;
+    }
+
+    .btn-sm {
+        padding: 4px 8px;
+        font-size: 0.74rem;
+    }
+
+    /* Metric cards */
+    .metric-card {
+        padding: 12px;
+    }
+
+    .metric-value {
+        font-size: 1.2rem;
+    }
+
+    .metric-label {
+        font-size: 0.68rem;
+    }
+
+    /* Info row */
+    .info-row {
+        font-size: 0.78rem;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    /* Modal adjustments */
+    .modal-dialog {
+        margin: 12px;
+    }
+
+    .modal-body {
+        padding: 14px;
+    }
+
+    .modal-header, .modal-footer {
+        padding: 12px 14px;
+    }
+}
+
+/* === Mobile Small (≤640px) === */
+@media (max-width: 640px) {
+    .crm-topbar {
+        height: 48px;
+        padding: 0 10px;
+    }
+
+    .crm-topbar-actions {
+        gap: 4px;
+    }
+
+    /* Hide user name on small screens */
+    .crm-user-pill span:not(.crm-role-badge) {
+        display: none;
+    }
+
+    .crm-user-pill {
+        padding: 4px 8px;
+        font-size: 0.75rem;
+    }
+
+    .crm-role-badge {
+        font-size: 0.6rem;
+        padding: 1px 5px;
+    }
+
+    .crm-page-title {
+        font-size: 0.82rem;
+    }
+
+    .crm-page {
+        padding: 10px;
+    }
+
+    /* Stats grid: single column */
+    .stats-grid,
+    .stats-grid[style*="grid-template-columns"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
+    }
+
+    .metric-card {
+        padding: 10px;
+    }
+
+    .metric-value {
+        font-size: 1.1rem;
+    }
+
+    .hero-stats { gap: 6px; }
+
+    /* Panel surface */
+    .panel-surface, .card {
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+    }
+
+    /* Filters: full width stacking */
+    .filter-group {
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* Row grid columns: full width */
+    .row > [class*="col"] {
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+        margin-bottom: 6px;
+    }
+
+    /* Nested row inside col (like custom date range) */
+    .row .row > .col-6 {
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+    }
+
+    /* Form controls: slightly larger touch targets */
+    .form-control, .form-select {
+        padding: 9px 10px;
+        font-size: 0.82rem;
+    }
+
+    .form-label {
+        font-size: 0.74rem;
+        margin-bottom: 3px;
+    }
+
+    /* Tables: compact */
+    .table-modern th, .table th {
+        padding: 6px 8px;
+        font-size: 0.65rem;
+        letter-spacing: 0.03em;
+    }
+
+    .table-modern td, .table td {
+        padding: 6px 8px;
+        font-size: 0.76rem;
+    }
+
+    /* Table panel toolbar */
+    .panel-toolbar {
+        padding: 8px 12px;
+    }
+
+    .panel-toolbar-copy h3 {
+        font-size: 0.82rem;
+    }
+
+    /* Badges: smaller */
+    .badge, .soft-badge {
+        font-size: 0.68rem;
+        padding: 2px 6px;
+    }
+
+    /* Tabs: smaller touch-friendly */
+    .nav-tabs .nav-link, .planning-tabs .nav-link {
+        padding: 6px 10px;
+        font-size: 0.74rem;
+    }
+
+    /* Page numbers: smaller */
+    .page-number, .stocks-page-number, .report-page-box {
+        min-width: 28px;
+        height: 28px;
+        font-size: 0.74rem;
+    }
+
+    /* Pagination container */
+    .pagination-container {
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .pagination-controls {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    /* Pool/Stocks pager */
+    .pool-pager, .stocks-pager {
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 12px;
+    }
+
+    /* Buttons: compact */
+    .btn {
+        padding: 5px 8px;
+        font-size: 0.76rem;
+        gap: 4px;
+    }
+
+    .btn-sm {
+        padding: 4px 6px;
+        font-size: 0.72rem;
+    }
+
+    /* Action buttons inline */
+    .pool-control-actions {
+        gap: 6px;
+    }
+
+    /* Section title */
+    .section-title {
+        font-size: 0.88rem;
+    }
+
+    .section-overline {
+        font-size: 0.65rem;
+    }
+
+    /* Alert */
+    .alert {
+        padding: 8px 10px;
+        font-size: 0.8rem;
+    }
+
+    /* D-flex utility wrapping */
+    .d-flex.gap-3 {
+        gap: 6px !important;
+    }
+
+    .d-flex.flex-wrap.gap-2 {
+        gap: 6px !important;
+    }
+
+    /* Topbar page-actions: wrap nicely */
+    .crm-topbar .crm-topbar-actions {
+        gap: 3px;
+    }
+
+    .crm-topbar .crm-topbar-actions .btn {
+        padding: 4px 6px;
+        font-size: 0.72rem;
+    }
+
+    /* Hide button text, show only icons in topbar on very small screens */
+    .crm-topbar .crm-topbar-actions .btn .me-1,
+    .crm-topbar .crm-topbar-actions .btn .me-2 {
+        margin-right: 0 !important;
+    }
+}
+
+/* === Mobile Extra Small (≤480px) === */
+@media (max-width: 480px) {
+    .crm-page {
+        padding: 8px;
+    }
+
+    .crm-topbar {
+        height: 46px;
+        padding: 0 8px;
+    }
+
+    .crm-page-title {
+        font-size: 0.78rem;
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* Stats grid: still 2 columns but tighter */
+    .stats-grid,
+    .stats-grid[style*="grid-template-columns"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 6px;
+    }
+
+    .metric-card {
+        padding: 8px;
+    }
+
+    .metric-value {
+        font-size: 1rem;
+    }
+
+    .metric-label {
+        font-size: 0.64rem;
+    }
+
+    .metric-copy {
+        font-size: 0.68rem;
+    }
+
+    /* Panel padding */
+    .panel-surface, .card {
+        padding: 8px;
+        margin-bottom: 8px;
+    }
+
+    /* Very small table text */
+    .table-modern th, .table th {
+        padding: 5px 6px;
+        font-size: 0.62rem;
+    }
+
+    .table-modern td, .table td {
+        padding: 5px 6px;
+        font-size: 0.72rem;
+    }
+
+    /* Form adjustments */
+    .form-control, .form-select {
+        padding: 7px 8px;
+        font-size: 0.8rem;
+    }
+
+    .form-label {
+        font-size: 0.7rem;
+    }
+
+    /* Topbar: hide logout button text */
+    .crm-topbar .btn i {
+        margin: 0 !important;
+    }
+
+    /* Content grid */
+    .content-grid {
+        gap: 8px;
+    }
+
+    /* Upload zone (orders page) */
+    .upload-zone {
+        padding: 16px;
+    }
+
+    .upload-zone i {
+        font-size: 1.5rem;
+    }
+
+    .upload-zone p {
+        font-size: 0.78rem;
+    }
+
+    /* Stat cards (orders page) */
+    .stat-card {
+        padding: 10px;
+        min-width: 0 !important;
+    }
+
+    .stat-card .stat-value {
+        font-size: 1.1rem;
+    }
+
+    .stat-card .stat-label {
+        font-size: 0.68rem;
+    }
+
+    /* Orders grid container table override */
+    .grid-container table {
+        min-width: 800px !important;
+    }
+
+    /* Hide less important columns on very small screens can be done per-page */
+}
+
+/* ─── Desktop Column Breakpoints (mobile-first overrides) ─── */
+@media (min-width: 768px) {
+    .col-md-3 { flex: 0 0 25%; max-width: 25%; }
+    .col-md-4 { flex: 0 0 33.33%; max-width: 33.33%; }
+    .col-md-6 { flex: 0 0 50%; max-width: 50%; }
+}
+
+@media (min-width: 1200px) {
+    .col-xl-2 { flex: 0 0 16.67%; max-width: 16.67%; }
+    .col-xl-3 { flex: 0 0 25%; max-width: 25%; }
+    .col-xl-4 { flex: 0 0 33.33%; max-width: 33.33%; }
+}
+
+/* ══════════════════════════════════════════════════════════
+   Page-Specific Mobile Fixes  &  Mobile Table Transforms
+   ══════════════════════════════════════════════════════════ */
+
+/* ─── Orders Page ─── */
+@media (max-width: 768px) {
+    .stats-row {
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
+    }
+
+    .stat-card {
+        min-width: 0;
+    }
+
+    .filter-bar {
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        padding: 12px !important;
+        text-align: left;
+    }
+
+    .filter-group {
+        flex: 1 1 calc(50% - 4px) !important;
+        min-width: 0 !important;
+    }
+
+    .filter-group label {
+        text-align: left;
+        font-size: 0.7rem;
+    }
+
+    .filter-group select,
+    .filter-group input {
+        min-width: 0 !important;
+    }
+
+    .orders-toolbar-actions {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        width: 100%;
+    }
+
+    .orders-toolbar-actions button {
+        width: auto;
+        margin-left: 0 !important;
+        white-space: nowrap;
+        font-size: 0.72rem !important;
+        padding: 8px 6px !important;
+    }
+
+    .grid-toolbar {
+        flex-direction: column;
+        gap: 8px;
+        align-items: flex-start !important;
+    }
+
+    .grid-toolbar .left {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 6px;
+    }
+
+    .grid-toolbar .left .btn-action {
+        flex: 1 1 calc(50% - 3px);
+        min-width: 0;
+        font-size: 0.72rem;
+        padding: 6px 10px;
+    }
+
+    .orders-hero {
+        grid-template-columns: 1fr !important;
+    }
+
+    .orders-panel-heading {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .pagination-container {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+        text-align: center;
+    }
+
+    .pagination-controls {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+}
+
+/*
+ * ─── ORDERS TABLE: Mobile Card Layout ───
+ * Converts the wide 15-column table into compact stacked cards
+ *
+ * Grid: 24px | 1fr | auto | auto
+ *   Row 1: [CB] SİP.NO .............. PAZAR
+ *   Row 2: [CB] Müşteri
+ *   Row 3: Ürün adı (full width)
+ *   Row 4: Adet: X    Stok: X [Düş]    Üretim: X    🟡Durum
+ *   Row 5: [İş Emri] [GİED]  ← yan yana
+ */
+@media (max-width: 768px) {
+    /* Remove table layout constraints */
+    .grid-container table {
+        min-width: 0 !important;
+        table-layout: auto !important;
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .grid-container {
+        overflow-x: hidden !important;
+    }
+
+    .grid-container thead {
+        display: none !important;
+    }
+
+    .grid-container tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        width: 100%;
+    }
+
+    /* Each row becomes a compact card with 4-column grid */
+    .grid-container tbody tr {
+        display: grid !important;
+        grid-template-columns: 24px 1fr auto auto;
+        gap: 0 6px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--z-border) !important;
+        position: relative;
+    }
+
+    .grid-container tbody tr.set-child-row { display: none !important; }
+    .grid-container tbody tr.set-child-row.show { display: grid !important; }
+
+    /* Reset all td styles */
+    .grid-container td {
+        overflow: visible !important;
+        text-overflow: unset !important;
+        white-space: normal !important;
+        max-width: none !important;
+        padding: 0 !important;
+        border: none !important;
+        font-size: 0.78rem;
+        line-height: 1.4;
+    }
+
+    /* Checkbox — left */
+    .grid-container td:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        display: flex !important;
+        align-items: flex-start;
+        padding-top: 2px !important;
+    }
+
+    /* Hide # */
+    .grid-container td:nth-child(2) {
+        display: none !important;
+    }
+
+    /* Sipariş No */
+    .grid-container td:nth-child(3) {
+        grid-column: 2 / 4;
+        grid-row: 1;
+        font-weight: 700;
+        font-size: 0.82rem;
+        color: var(--z-text);
+    }
+
+    /* Pazar */
+    .grid-container td:nth-child(4) {
+        grid-column: 4;
+        grid-row: 1;
+        text-align: right;
+        font-size: 0.68rem;
+        color: var(--z-text-muted);
+        font-weight: 600;
+    }
+
+    /* Müşteri */
+    .grid-container td:nth-child(5) {
+        grid-column: 2 / 5;
+        grid-row: 2;
+        font-size: 0.72rem;
+        color: var(--z-text-secondary);
+    }
+
+    /* Ürün — full width */
+    .grid-container td:nth-child(6) {
+        grid-column: 1 / 5;
+        grid-row: 3;
+        font-weight: 600;
+        font-size: 0.78rem;
+        color: var(--z-text);
+        padding-top: 4px !important;
+        line-height: 1.3;
+    }
+
+    /* ── Stats line: Adet | Stok | Üretim | Durum ── */
+
+    /* Adet */
+    .grid-container td:nth-child(7) {
+        grid-column: 1 / 2;
+        grid-row: 4;
+        padding-top: 6px !important;
+        font-size: 0.74rem;
+        font-weight: 700;
+        color: var(--z-accent);
+    }
+
+    .grid-container td:nth-child(7)::before {
+        content: "Adet: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Stok */
+    .grid-container td:nth-child(8) {
+        grid-column: 2;
+        grid-row: 4;
+        font-size: 0.74rem;
+        padding-top: 6px !important;
+    }
+
+    .grid-container td:nth-child(8)::before {
+        content: "Stok: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Stoktan Düş button — inline */
+    .grid-container td:nth-child(8) .btn-stok {
+        display: inline !important;
+        width: auto !important;
+        padding: 1px 6px !important;
+        font-size: 0.65rem !important;
+        margin-top: 0 !important;
+        margin-left: 3px;
+        vertical-align: middle;
+    }
+
+    /* Üretim */
+    .grid-container td:nth-child(9) {
+        grid-column: 3;
+        grid-row: 4;
+        font-size: 0.74rem;
+        padding-top: 6px !important;
+        text-align: right;
+    }
+
+    .grid-container td:nth-child(9)::before {
+        content: "Ürtm: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Durum — rightmost on stats line */
+    .grid-container td:nth-child(12) {
+        grid-column: 4;
+        grid-row: 4;
+        text-align: right;
+        padding-top: 6px !important;
+    }
+
+    /* Hide non-essential columns */
+    .grid-container td:nth-child(10),
+    .grid-container td:nth-child(11),
+    .grid-container td:nth-child(13),
+    .grid-container td:nth-child(14) {
+        display: none !important;
+    }
+
+    /* Aksiyon butonları — yan yana */
+    .grid-container td:nth-child(15) {
+        grid-column: 1 / 5;
+        grid-row: 5;
+        padding-top: 6px !important;
+    }
+
+    /* Override JS inline flex-direction: column → row */
+    .grid-container td:nth-child(15) > div {
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 6px !important;
+        align-items: center !important;
+    }
+
+    .grid-container td:nth-child(15) > div > * {
+        flex: 1 !important;
+        width: auto !important;
+    }
+
+    .grid-container td:nth-child(15) .btn-row-action {
+        flex: 1 !important;
+        width: auto !important;
+        text-align: center;
+        padding: 7px 4px !important;
+        font-size: 0.73rem !important;
+    }
+
+    .grid-container td:nth-child(15) .btn-row-action i {
+        margin-right: 2px;
+    }
+
+    .grid-container td:nth-child(15) select.match-select {
+        width: 100% !important;
+        font-size: 0.76rem;
+    }
+}
+
+
+/*
+ * ─── ADMIN POOL TABLE: Mobile Compact ───
+ * 10 columns: No, ÜrünID, AraÜrün, Tarih, Saat, Üretilebilir, Toplam, Açıklama, Bölüm, İşlem
+ */
+@media (max-width: 768px) {
+    .pool-table {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .pool-table thead {
+        display: none !important;
+    }
+
+    .pool-table tbody {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .pool-table tbody tr {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--z-border);
+        position: relative;
+    }
+
+    .pool-table tbody tr.group-header {
+        display: flex !important;
+        background: var(--z-bg-soft) !important;
+        padding: 8px 14px;
+        font-weight: 700;
+    }
+
+    .pool-table tbody tr.group-header td {
+        display: inline !important;
+    }
+
+    .pool-table td {
+        padding: 1px 0 !important;
+        border: none !important;
+        font-size: 0.78rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* No */
+    .pool-table td:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1;
+        font-weight: 600;
+        color: var(--z-text-muted);
+        font-size: 0.72rem;
+    }
+
+    .pool-table td:nth-child(1)::before {
+        content: "#";
+        margin-right: 2px;
+    }
+
+    /* Ürün ID — primary */
+    .pool-table td:nth-child(2) {
+        grid-column: 1 / 3;
+        grid-row: 2;
+        font-weight: 700;
+        font-size: 0.82rem;
+        color: var(--z-text);
+    }
+
+    /* Ara Ürün */
+    .pool-table td:nth-child(3) {
+        grid-column: 1 / 3;
+        grid-row: 3;
+        font-size: 0.76rem;
+    }
+
+    /* Tarih */
+    .pool-table td:nth-child(4) {
+        grid-column: 2;
+        grid-row: 1;
+        text-align: right;
+        font-size: 0.72rem;
+        color: var(--z-text-muted);
+    }
+
+    /* Saat — hide */
+    .pool-table td:nth-child(5) {
+        display: none !important;
+    }
+
+    /* Üretilebilir */
+    .pool-table td:nth-child(6) {
+        grid-column: 1;
+        grid-row: 4;
+        font-weight: 700;
+        color: var(--z-accent);
+        padding-top: 4px !important;
+    }
+
+    .pool-table td:nth-child(6)::before {
+        content: "Üretilebilir: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Toplam */
+    .pool-table td:nth-child(7) {
+        grid-column: 2;
+        grid-row: 4;
+        text-align: right;
+        padding-top: 4px !important;
+    }
+
+    .pool-table td:nth-child(7)::before {
+        content: "Toplam: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Açıklama — hide */
+    .pool-table td:nth-child(8) {
+        display: none !important;
+    }
+
+    /* Bölüm */
+    .pool-table td:nth-child(9) {
+        grid-column: 1;
+        grid-row: 5;
+        font-size: 0.72rem;
+        color: var(--z-text-secondary);
+    }
+
+    /* İşlem */
+    .pool-table td:nth-child(10) {
+        grid-column: 2;
+        grid-row: 5;
+        text-align: right;
+    }
+}
+
+/*
+ * ─── STOCKS TABLE: Mobile Compact ───
+ * 8 cols: No, Bölüm, AraÜrün, ÜrünÇeşidi, Adet, Tampon, Kullanılabilir, İşlem
+ */
+@media (max-width: 768px) {
+    .stocks-table {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .stocks-table thead {
+        display: none !important;
+    }
+
+    .stocks-table tbody {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .stocks-table tbody tr {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 2px 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--z-border);
+    }
+
+    .stocks-table td {
+        padding: 1px 0 !important;
+        border: none !important;
+        font-size: 0.78rem;
+    }
+
+    /* No */
+    .stocks-table td:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1;
+        font-size: 0.72rem;
+        color: var(--z-text-muted);
+    }
+
+    .stocks-table td:nth-child(1)::before {
+        content: "#";
+        margin-right: 2px;
+    }
+
+    /* Bölüm */
+    .stocks-table td:nth-child(2) {
+        grid-column: 1 / 3;
+        grid-row: 2;
+        font-weight: 700;
+        font-size: 0.82rem;
+    }
+
+    /* Ara Ürün */
+    .stocks-table td:nth-child(3) {
+        grid-column: 1 / 3;
+        grid-row: 3;
+        font-size: 0.76rem;
+        color: var(--z-text-secondary);
+    }
+
+    /* Ürün Çeşidi */
+    .stocks-table td:nth-child(4) {
+        grid-column: 2;
+        grid-row: 1;
+        text-align: right;
+        font-size: 0.72rem;
+    }
+
+    /* Adet */
+    .stocks-table td:nth-child(5) {
+        grid-column: 1;
+        grid-row: 4;
+        padding-top: 4px !important;
+    }
+
+    .stocks-table td:nth-child(5)::before {
+        content: "Stok: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Tampon */
+    .stocks-table td:nth-child(6) {
+        grid-column: 2;
+        grid-row: 4;
+        padding-top: 4px !important;
+    }
+
+    .stocks-table td:nth-child(6)::before {
+        content: "Tampon: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Kullanılabilir */
+    .stocks-table td:nth-child(7) {
+        grid-column: 3;
+        grid-row: 1 / 5;
+        display: flex !important;
+        align-items: center;
+        font-weight: 700;
+        font-size: 0.88rem;
+        padding-left: 8px !important;
+    }
+
+    /* İşlem */
+    .stocks-table td:nth-child(8) {
+        grid-column: 3;
+        grid-row: 5;
+        text-align: right;
+    }
+}
+
+/*
+ * ─── REPORTS TABLE: Mobile Compact ───
+ * 9 cols: GorevNo, NihaiUrun, AraUrun, Bolum, Personel, Baslama, Bitis, Adet, Performans
+ */
+@media (max-width: 768px) {
+    .table-modern.table-sm {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .table-modern.table-sm thead {
+        display: none !important;
+    }
+
+    .table-modern.table-sm tbody {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .table-modern.table-sm tbody tr {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--z-border);
+    }
+
+    .table-modern.table-sm td {
+        padding: 1px 0 !important;
+        border: none !important;
+        font-size: 0.78rem;
+    }
+
+    /* Görev No */
+    .table-modern.table-sm td:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1;
+        font-size: 0.72rem;
+        color: var(--z-text-muted);
+        font-weight: 600;
+    }
+
+    /* Nihai Ürün */
+    .table-modern.table-sm td:nth-child(2) {
+        grid-column: 1 / 3;
+        grid-row: 2;
+        font-weight: 700;
+        font-size: 0.82rem;
+    }
+
+    /* Ara Ürün */
+    .table-modern.table-sm td:nth-child(3) {
+        grid-column: 1 / 3;
+        grid-row: 3;
+        font-size: 0.76rem;
+        color: var(--z-text-secondary);
+    }
+
+    /* Bölüm — hide */
+    .table-modern.table-sm td:nth-child(4) {
+        display: none !important;
+    }
+
+    /* Personel */
+    .table-modern.table-sm td:nth-child(5) {
+        grid-column: 2;
+        grid-row: 1;
+        text-align: right;
+        font-size: 0.74rem;
+    }
+
+    /* Başlama */
+    .table-modern.table-sm td:nth-child(6) {
+        grid-column: 1;
+        grid-row: 4;
+        font-size: 0.72rem;
+        color: var(--z-text-muted);
+        padding-top: 4px !important;
+    }
+
+    /* Bitiş */
+    .table-modern.table-sm td:nth-child(7) {
+        grid-column: 2;
+        grid-row: 4;
+        text-align: right;
+        font-size: 0.72rem;
+        color: var(--z-text-muted);
+        padding-top: 4px !important;
+    }
+
+    /* Adet */
+    .table-modern.table-sm td:nth-child(8) {
+        grid-column: 1;
+        grid-row: 5;
+        padding-top: 4px !important;
+    }
+
+    /* Performans */
+    .table-modern.table-sm td:nth-child(9) {
+        grid-column: 2;
+        grid-row: 5;
+        text-align: right;
+        padding-top: 4px !important;
+    }
+}
+
+/*
+ * ─── PLANNING SUMMARY TABLE: Mobile Compact ───
+ * 7 cols: Urun, ToplamSiparis, Uretilebilir, EksikMiktar, KargoSon, Durum, Islem
+ */
+@media (max-width: 768px) {
+    .planning-summary-table {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .planning-summary-table thead {
+        display: none !important;
+    }
+
+    .planning-summary-table tbody {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .planning-summary-table tbody tr {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--z-border);
+    }
+
+    .planning-summary-table td {
+        padding: 1px 0 !important;
+        border: none !important;
+        font-size: 0.78rem;
+    }
+
+    /* Ürün */
+    .planning-summary-table td:nth-child(1) {
+        grid-column: 1 / 3;
+        grid-row: 1;
+        font-weight: 700;
+        font-size: 0.82rem;
+    }
+
+    /* Toplam Sipariş */
+    .planning-summary-table td:nth-child(2) {
+        grid-column: 1;
+        grid-row: 2;
+        padding-top: 4px !important;
+    }
+
+    .planning-summary-table td:nth-child(2)::before {
+        content: "Sipariş: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Üretilebilir */
+    .planning-summary-table td:nth-child(3) {
+        grid-column: 2;
+        grid-row: 2;
+        text-align: right;
+        padding-top: 4px !important;
+    }
+
+    .planning-summary-table td:nth-child(3)::before {
+        content: "Üretim: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Eksik */
+    .planning-summary-table td:nth-child(4) {
+        grid-column: 1;
+        grid-row: 3;
+    }
+
+    .planning-summary-table td:nth-child(4)::before {
+        content: "Eksik: ";
+        font-weight: 500;
+        color: var(--z-text-muted);
+        font-size: 0.68rem;
+    }
+
+    /* Kargo Son */
+    .planning-summary-table td:nth-child(5) {
+        grid-column: 2;
+        grid-row: 3;
+        text-align: right;
+    }
+
+    /* Durum */
+    .planning-summary-table td:nth-child(6) {
+        grid-column: 1;
+        grid-row: 4;
+        padding-top: 4px !important;
+    }
+
+    /* İşlem */
+    .planning-summary-table td:nth-child(7) {
+        grid-column: 2;
+        grid-row: 4;
+        text-align: right;
+        padding-top: 4px !important;
+    }
+
+    .planning-summary-table td:nth-child(7) .btn {
+        width: 100%;
+    }
+}
+
+/* ─── Planning Page Controls ─── */
+@media (max-width: 768px) {
+    .planning-control-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .planning-control-grid > div[style*="grid-column: span 2"] {
+        grid-column: span 1 !important;
+    }
+
+    .planning-task-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .planning-task-actions {
+        justify-content: flex-start;
+        width: 100%;
+    }
+
+    .planning-task-actions .btn {
+        flex: 1;
+    }
+
+    .planning-task-meta {
+        font-size: 0.74rem;
+        line-height: 1.6;
+    }
+
+    .planning-date-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+}
+
+/* ─── Workorder Page ─── */
+@media (max-width: 768px) {
+    .workorder-form-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .workorder-form-grid .span-2 {
+        grid-column: span 1 !important;
+    }
+}
+
+/* ─── Reports Page ─── */
+@media (max-width: 640px) {
+    .report-pager {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
+
+    .report-pager .btn-group {
+        display: flex;
+        width: 100%;
+    }
+
+    .report-pager .btn-group .btn {
+        flex: 1;
+    }
+
+    .report-chip {
+        font-size: 0.68rem;
+        padding: 2px 8px;
+    }
+}
+
+/* ─── Status Bar Flex Wrap ─── */
+@media (max-width: 640px) {
+    .d-flex.justify-content-between.align-items-center.flex-wrap {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 6px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
+   Mobile Card View & Fat Finger Optimizations (Global)
+   ═══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+    /* Base Shell & Topbar - Resilience Update */
+    .crm-shell { height: auto; overflow: visible; }
+    .crm-main { height: auto; overflow: visible; }
+    
+    .crm-topbar { 
+        padding: 12px 14px !important; 
+        height: auto !important; 
+        min-height: 60px !important;
+        flex-direction: column !important; 
+        align-items: stretch !important;
+        position: relative !important; 
+        background: #ffffff !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important;
+        z-index: 1000 !important;
+    }
+    
+    .crm-topbar > div:first-child {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        width: 100% !important;
+        margin-bottom: 15px !important;
+    }
+
+    .crm-topbar-actions {
+        width: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+        align-items: stretch !important;
+        margin-left: 0 !important;
+    }
+
+    .crm-topbar-actions > *, 
+    .crm-topbar-actions .btn,
+    .crm-topbar-actions form {
+        width: 100% !important;
+        margin: 0 !important;
+    }
+
+    .crm-user-pill {
+        justify-content: center !important;
+        padding: 10px !important;
+        border-radius: 8px !important;
+        width: 100% !important;
+    }
+
+    .crm-page { 
+        padding: 15px 12px 50px !important; 
+        margin-top: 0 !important;
+        width: 100% !important;
+    }
+
+    /* Section Headers & Page Actions */
+    .section-header, 
+    .panel-toolbar {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 15px !important;
+        text-align: left !important;
+        padding: 15px !important;
+    }
+    
+    .section-header .btn-group, 
+    .section-header .d-flex,
+    .panel-toolbar .panel-toolbar-meta {
+        width: 100% !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+    }
+    
+    .panel-toolbar-meta .btn, 
+    .panel-toolbar-meta .btn-group,
+    .section-header .btn {
+        width: 100% !important;
+        margin-left: 0 !important;
+    }
+
+    /* Grid & Metric Cards */
+    .stats-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+    .content-grid { grid-template-columns: 1fr !important; gap: 20px !important; }
+    
+    /* Touch Ergonomics (Fat Finger) */
+    .btn, .btn-sm, .form-control, .form-select {
+        min-height: 48px !important;
+        font-size: 16px !important; /* Prevents auto-zoom on iOS */
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        border-radius: 8px !important;
+    }
+    
+    .btn-group {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        width: 100% !important;
+    }
+    
+    .btn-group > .btn {
+        margin-left: 0 !important;
+        border-radius: 8px !important;
+    }
+
+    /* Table to Card System (Max Resilience) */
+    .table-modern thead { display: none !important; }
+    .table-modern, 
+    .table-modern tbody, 
+    .table-modern tr, 
+    .table-modern td {
+        display: block !important;
+        width: 100% !important;
+    }
+    
+    .table-modern tr {
+        margin-bottom: 25px !important;
+        border: 1px solid var(--z-border) !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        background: #ffffff !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.04) !important;
+    }
+    
+    .table-modern td {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 14px 16px !important;
+        border-bottom: 1px solid #f3f4f6 !important;
+        min-height: 48px !important;
+        text-align: right !important;
+        white-space: normal !important;
+    }
+    
+    .table-modern td:last-child { 
+        border-bottom: none !important; 
+        background: #f9fafb !important;
+        padding: 20px 16px !important;
+        flex-direction: column !important;
+        gap: 12px !important;
+    }
+
+    .table-modern td:last-child::before {
+        content: "EYLEMLER" !important;
+        display: block !important;
+        width: 100% !important;
+        text-align: center !important;
+        font-size: 0.7rem !important;
+        font-weight: 800 !important;
+        color: #9ca3af !important;
+        margin-bottom: 5px !important;
+        letter-spacing: 0.15em !important;
+    }
+
+    /* Data Label Magic */
+    .table-modern td::before {
+        content: attr(data-label) !important;
+        font-weight: 800 !important;
+        color: #4b5563 !important;
+        text-transform: uppercase !important;
+        font-size: 0.72rem !important;
+        letter-spacing: 0.05em !important;
+        text-align: left !important;
+        flex: 1 !important;
+        padding-right: 15px !important;
+    }
+
+    /* Alert and Badge Stack */
+    .alert { flex-direction: column !important; gap: 8px !important; }
+    .soft-badge { width: auto !important; display: inline-flex !important; }
+}

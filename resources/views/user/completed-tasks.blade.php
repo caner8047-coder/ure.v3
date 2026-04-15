@@ -1,23 +1,49 @@
 @extends('layouts.user')
-@section('title', 'Tamamlanan Görevler - Zem Mobilya')
+@section('title', 'Tamamlanan Gorevler')
 
 @section('content')
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0"><i class="bi bi-check-circle me-2"></i>Tamamlanan Görevler</h4>
-</div>
-
-<div class="card shadow-sm">
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-striped table-hover table-sm mb-0">
-                <thead class="table-dark">
-                    <tr><th>#</th><th>Ürün</th><th>Bölüm</th><th>Adet</th><th>Tamamlanma Tarihi</th></tr>
-                </thead>
-                <tbody id="completedBody">
-                    <tr><td colspan="5" class="text-center py-4 text-muted">Henüz tamamlanan görev yok.</td></tr>
-                </tbody>
-            </table>
-        </div>
+<section class="panel-surface table-panel">
+    <div class="panel-toolbar">
+        <div class="panel-toolbar-copy"><h3>Tamamlanan Gorevler</h3></div>
+        <div class="panel-toolbar-meta"><span class="soft-badge success">Biten</span></div>
     </div>
-</div>
+    <div class="table-shell">
+        <table class="table-modern table-sm">
+            <thead>
+                <tr><th>#</th><th>Urun</th><th>Bolum</th><th>Adet</th><th>Tamamlanma Tarihi</th></tr>
+            </thead>
+            <tbody id="completedBody">
+                <tr><td colspan="5" class="text-center py-4 text-muted">Henuz tamamlanan gorev yok.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
 @endsection
+
+@push('scripts')
+<script>
+fetch('/api/panel/completed-tasks')
+    .then(r => r.json())
+    .then(data => {
+        const tasks = data.tasks || [];
+        const body = document.getElementById('completedBody');
+        if (!tasks.length) {
+            body.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">Henuz tamamlanan gorev yok.</td></tr>';
+            return;
+        }
+
+        body.innerHTML = tasks.map(task => `
+            <tr>
+                <td>${task.No}</td>
+                <td>${task.AraUrunAdi || task.UrunAdi || '-'}</td>
+                <td>${task.BolumAdi || '-'}</td>
+                <td>${task.Adet ?? 0}</td>
+                <td>${task.GorevBaslamaTarihi || '-'}</td>
+            </tr>
+        `).join('');
+    })
+    .catch(() => {
+        document.getElementById('completedBody').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-danger">Tamamlanan gorevler yuklenemedi.</td></tr>';
+    });
+</script>
+@endpush

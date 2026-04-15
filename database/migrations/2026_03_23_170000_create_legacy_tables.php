@@ -75,8 +75,10 @@ return new class extends Migration
             Schema::create('tbBolumHavuz', function (Blueprint $table) {
                 $table->integer('No')->autoIncrement();
                 $table->integer('UrunIDNo')->nullable();
-                $table->dateTime('GorevBaslangicTarihi')->nullable();
-                $table->integer('BolumAdiNo')->nullable();
+                $table->string('GorevBaslangicTarihi', 50);
+                $table->integer('BolumAdiNo');
+                $table->text('Aciklama')->nullable();
+                $table->string('GorevBaslangicSaati', 50)->nullable();
                 $table->integer('AraUrunAdiNo')->nullable();
                 $table->integer('Adet')->nullable()->default(0);
                 $table->integer('ToplamAdet')->nullable()->default(0);
@@ -86,29 +88,29 @@ return new class extends Migration
 
         if (!Schema::hasTable('tbGorevler')) {
             Schema::create('tbGorevler', function (Blueprint $table) {
-                $table->integer('No')->primary();
-                $table->integer('UrunIDNo')->nullable();
-                $table->string('GorevBaslamaTarihi', 50)->nullable();
-                $table->string('GorevBitisTarihi', 50)->nullable();
-                $table->integer('ToplamAdet')->nullable()->default(0);
+                $table->integer('No')->autoIncrement();
+                $table->integer('UrunIDNo');
+                $table->string('GorevBaslamaTarihi', 50);
+                $table->string('GorevBitisTarihi', 50);
+                $table->integer('ToplamAdet');
                 $table->integer('BolumAdiNo')->nullable();
-                $table->integer('AraUrunAdiNo')->nullable();
-                $table->integer('UretilenAdet')->nullable()->default(0);
                 $table->integer('PersonelNo')->nullable();
+                $table->integer('Performans')->nullable()->default(0);
+                $table->integer('AraUrunAdiNo')->nullable();
             });
         }
 
         if (!Schema::hasTable('tbPersonelGorev')) {
             Schema::create('tbPersonelGorev', function (Blueprint $table) {
                 $table->integer('No')->autoIncrement();
-                $table->integer('UrunIDNo')->nullable();
-                $table->integer('PersonelNo')->nullable();
-                $table->integer('Adet')->nullable()->default(0);
+                $table->integer('UrunIDNo');
+                $table->integer('PersonelNo');
+                $table->string('GorevBaslamaTarihi', 50);
+                $table->integer('Adet');
                 $table->integer('BekleyenAdet')->nullable()->default(0);
-                $table->tinyInteger('Onay')->nullable()->default(0);
+                $table->string('Onay', 5)->nullable();
                 $table->integer('AraUrunAdiNo')->nullable();
-                $table->integer('BolumAdiNo')->nullable();
-                $table->dateTime('GorevTarihi')->nullable();
+                $table->integer('BolumAdiNo');
             });
         }
 
@@ -239,7 +241,7 @@ return new class extends Migration
                 $table->string('Kategori', 100)->nullable();
                 $table->dateTime('IsEmriTarihi')->nullable();
                 $table->string('IslemTipi', 30);
-                $table->dateTime('IslemTarihi')->nullable();
+                $table->dateTime('IslemTarihi');
                 $table->integer('GorevNo')->nullable();
                 $table->integer('EslesenUrunNo')->nullable();
                 $table->string('EslesenUrunTur', 10)->nullable();

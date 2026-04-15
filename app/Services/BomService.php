@@ -21,6 +21,26 @@ use Illuminate\Support\Facades\DB;
  */
 class BomService
 {
+    public function resolveLegacyProductNo(int|string $urunIDNo): int
+    {
+        if (is_int($urunIDNo)) {
+            return $urunIDNo;
+        }
+
+        $raw = trim((string) $urunIDNo);
+        if ($raw === '') {
+            return 0;
+        }
+
+        if (ctype_digit($raw)) {
+            return intval($raw);
+        }
+
+        $match = DB::table('tbUrunler')->where('UrunID', $raw)->value('No');
+
+        return $match !== null ? intval($match) : 502;
+    }
+
     /**
      * Alt bileşen No'ları — tbAraUrun.Yol'dan parse eder.
      * Yol formatı: "3-4:4-8" → bileşen 3 (4 adet) ve bileşen 4 (8 adet)
@@ -141,6 +161,41 @@ class BomService
     }
 
     /**
+     * Nihai/Ara ürün için toplam üretilebilir maksimum adeti stok dar bogazina göre hesaplar.
+     */
+    public function uretilebilirNihaiAdet(int $urunNo, string $tur): int
+    {
+        try {
+            if ($tur === 'Ara Mamül') {
+                return max(0, $this->adetBelirle((string)$urunNo));
+            } else {
+                $yol = DB::table('tbUrunler')->where('No', $urunNo)->value('AraAdlarYol');
+                if (empty($yol)) return 0;
+                
+                $minVal = 1000000;
+                $components = explode(':', trim($yol));
+                
+                foreach ($components as $parca) {
+                    $parts = explode('-', trim($parca));
+                    if (count($parts) >= 2) {
+                        $altNo = intval($parts[0]);
+                        $mult = floatval($parts[1]);
+                        
+                        $stock = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $altNo)->value('Adet');
+                        $stock = $stock ? floatval($stock) : 0;
+                        
+                        $producible = ($mult > 0) ? intval(floor($stock / $mult)) : 0;
+                        if ($producible < $minVal) $minVal = $producible;
+                    }
+                }
+                return $minVal === 1000000 ? 0 : $minVal;
+            }
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
      * Stok tamponu düşer ve düşürülen miktarı döndürür.
      */
     public function araStokTamponAzalt(string $araUrunAdiNo, int $adet): int
@@ -180,12 +235,13 @@ class BomService
      * Orchestrator — Tek bir ara ürün için iş emri oluşturur.
      */
     public function minAraUrunUretimiDenetle(
-        int $urunIDNo, string $yol, string $refUrunAdiNo,
+        int|string $urunIDNo, string $yol, string $refUrunAdiNo,
         int $uretimAdet, string $aciklama, string $stokDurum,
         array &$tamponDusumleri = []
     ): int {
         try {
             $araUrunNo = intval($refUrunAdiNo);
+            $legacyUrunIDNo = $this->resolveLegacyProductNo($urunIDNo);
             $uretilebilir = $this->adetBelirle($refUrunAdiNo);
             $uretimAdet = $this->uretimAdetBelirle($refUrunAdiNo, $yol, $uretimAdet);
 
@@ -201,25 +257,44 @@ class BomService
             if ($uretimAdet <= 0) return 0;
 
             $bolumAdiNo = intval(DB::table('tbAraUrun')->where('No', $araUrunNo)->value('BolumAdiNo') ?? 0);
+            $legacyDate = now()->format('d/m/Y');
+            $legacyTime = now()->format('H:i');
+            $legacyAciklama = trim($aciklama);
+            $existingQuery = DB::table('tbBolumHavuz')->where('AraUrunAdiNo', $araUrunNo);
+            $rawUrunIDNo = trim((string) $urunIDNo);
 
-            $existing = DB::table('tbBolumHavuz')
-                ->where('AraUrunAdiNo', $araUrunNo)
-                ->where('UrunIDNo', $urunIDNo)
-                ->first();
+            if ($rawUrunIDNo !== '' && !ctype_digit($rawUrunIDNo)) {
+                $existing = (clone $existingQuery)
+                    ->whereIn('UrunIDNo', array_values(array_unique([$legacyUrunIDNo, 0])))
+                    ->orderByRaw('CASE WHEN UrunIDNo = ? THEN 0 ELSE 1 END', [$legacyUrunIDNo])
+                    ->first();
+            } else {
+                $existing = (clone $existingQuery)
+                    ->where('UrunIDNo', $legacyUrunIDNo)
+                    ->first();
+            }
 
             if ($existing) {
-                DB::table('tbBolumHavuz')->where('No', $existing->No)->update([
+                $updatePayload = [
                     'ToplamAdet' => DB::raw("ToplamAdet + {$uretimAdet}"),
                     'Adet' => DB::raw("Adet + {$uretilebilir}"),
-                ]);
+                ];
+
+                if (intval($existing->UrunIDNo ?? 0) !== $legacyUrunIDNo) {
+                    $updatePayload['UrunIDNo'] = $legacyUrunIDNo;
+                }
+
+                DB::table('tbBolumHavuz')->where('No', $existing->No)->update($updatePayload);
             } else {
                 DB::table('tbBolumHavuz')->insert([
-                    'UrunIDNo' => $urunIDNo,
+                    'UrunIDNo' => $legacyUrunIDNo,
                     'AraUrunAdiNo' => $araUrunNo,
                     'ToplamAdet' => $uretimAdet,
                     'Adet' => $uretilebilir,
                     'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
-                    'GorevBaslangicTarihi' => now(),
+                    'Aciklama' => $legacyAciklama !== '' ? $legacyAciklama : null,
+                    'GorevBaslangicTarihi' => $legacyDate,
+                    'GorevBaslangicSaati' => $legacyTime,
                 ]);
             }
             return $uretimAdet;
@@ -233,7 +308,7 @@ class BomService
      */
     public function isEmriVerRecursive(
         string $refUrunAdiNo, int $uretimAdet, string $aciklama,
-        string $yol, int $urunIDNo, string $stokDurum,
+        string $yol, int|string $urunIDNo, string $stokDurum,
         array &$tamponDusumleri = []
     ): void {
         $subComponents = $this->birAdimOncesiUrunAdlari($refUrunAdiNo);
@@ -277,5 +352,191 @@ class BomService
             'EslesenUrunTur' => $eslesenUrunTur,
             'KargoSonTeslim' => $kargoSonTeslim,
         ]);
+    }
+
+    // ================================================================
+    // sonrakiUrunAdlari — Bu parçayı YOL'unda kullanan üst ürünleri bulur
+    // ================================================================
+    public function sonrakiUrunAdlari(string $refUrunAdiNo): string
+    {
+        $results = [];
+
+        $allAraUrunler = DB::table('tbAraUrun')
+            ->whereNotNull('Yol')
+            ->where('Yol', '!=', '')
+            ->select('No', 'Yol')
+            ->get();
+
+        foreach ($allAraUrunler as $araUrun) {
+            $yolParcalari = explode(':', $araUrun->Yol);
+            foreach ($yolParcalari as $parca) {
+                $parts = explode('-', $parca);
+                if (isset($parts[0]) && trim($parts[0]) === $refUrunAdiNo) {
+                    $results[] = strval($araUrun->No);
+                    break;
+                }
+            }
+        }
+
+        return implode(':', array_unique($results));
+    }
+
+    // ================================================================
+    // SonrakiUrunAdetleriniGuncelle2
+    // Stok değiştiğinde, o parçayı kullanan üst ürünlerin havuzdaki
+    // üretilebilir adetlerini (Adet) yeniden hesaplar.
+    // ================================================================
+    public function sonrakiUrunAdetleriniGuncelle(string $refUrunAdiNo, ?int $eskiAdet = null, ?int $yeniAdet = null): void
+    {
+        $oncekiUrunleriKontrolEt = false;
+        $sonrakiAdlar = $this->sonrakiUrunAdlari($refUrunAdiNo);
+        if (empty($sonrakiAdlar)) return;
+
+        $strings = explode(':', $sonrakiAdlar);
+
+        foreach ($strings as $araNo) {
+            $araNo = trim($araNo);
+            if (empty($araNo)) continue;
+
+            $adetBelirle = $this->adetBelirle($araNo);
+            if ($adetBelirle < 0) continue;
+
+            $araGorevler = DB::table('tbBolumHavuz')
+                ->where('AraUrunAdiNo', intval($araNo))
+                ->get();
+
+            foreach ($araGorevler as $gorev) {
+                $newAdet = ($gorev->ToplamAdet < $adetBelirle) ? $gorev->ToplamAdet : $adetBelirle;
+                DB::table('tbBolumHavuz')->where('No', $gorev->No)->update(['Adet' => $newAdet]);
+                $oncekiUrunleriKontrolEt = true;
+            }
+        }
+
+        if ($eskiAdet !== null && $yeniAdet !== null && $yeniAdet < $eskiAdet && $oncekiUrunleriKontrolEt) {
+            try {
+                $aciklama = 'Stok guncelleme ile verilen görev...';
+                $hazirdaVerilenIsSayisi = $this->verilenIsSayisi($refUrunAdiNo);
+                $stokMiktar = $this->stokGetir($refUrunAdiNo);
+                $uretimAdet = ($eskiAdet - $yeniAdet) + $hazirdaVerilenIsSayisi + $stokMiktar;
+                $yol = $this->tumYolHazirla($refUrunAdiNo);
+
+                $this->minAraUrunUretimiDenetle('Ara Mamül', $yol, $refUrunAdiNo, $uretimAdet, $aciklama, 'StokDahil');
+
+                $recursiveUretimAdet = $uretimAdet - $stokMiktar;
+                if (
+                    $recursiveUretimAdet > 0
+                    && trim($this->birAdimOncesiUrunAdlari($refUrunAdiNo)) !== ''
+                ) {
+                    $this->isEmriVerRecursive(
+                        $refUrunAdiNo,
+                        $recursiveUretimAdet,
+                        $aciklama,
+                        $yol,
+                        'Ara Mamül',
+                        'StokDahil'
+                    );
+                }
+            } catch (\Throwable $e) {
+                // Legacy akışta bu dal sessiz çalışıyordu; stok kaydını bozma.
+            }
+        }
+    }
+
+    public function verilenIsSayisi(string $refUrunAdiNo): int
+    {
+        $araUrunNo = intval($refUrunAdiNo);
+
+        $havuz = intval(
+            DB::table('tbBolumHavuz')
+                ->where('AraUrunAdiNo', $araUrunNo)
+                ->sum('ToplamAdet')
+        );
+
+        $personel = intval(
+            DB::table('tbPersonelGorev')
+                ->where('AraUrunAdiNo', $araUrunNo)
+                ->selectRaw('COALESCE(SUM(COALESCE(Adet, 0) + COALESCE(BekleyenAdet, 0)), 0) as toplam')
+                ->value('toplam') ?? 0
+        );
+
+        return $havuz + $personel;
+    }
+
+    public function stokGetir(string $refUrunAdiNo): int
+    {
+        return intval(
+            DB::table('tbBolumAraStok')
+                ->where('AraUrunAdiNo', intval($refUrunAdiNo))
+                ->value('Adet') ?? 0
+        );
+    }
+
+    // ================================================================
+    // personelGorevTabloGuncelle
+    // Stok/havuz değiştiğinde, onu bekleyen personel görevlerini (Adet ve 
+    // BekleyenAdet) üretilebilir limite göre günceller.
+    // ================================================================
+    public function personelGorevTabloGuncelle(string $araUrunNo): void
+    {
+        $sonUrunMu = true;
+        $kontrolUrunlerStr = $this->sonrakiUrunAdlari($araUrunNo);
+        $kontrolUrunler = explode(':', $kontrolUrunlerStr);
+
+        if (count($kontrolUrunler) > 0 && trim($kontrolUrunler[0]) !== '') {
+            foreach ($kontrolUrunler as $urunNo) {
+                $intUrnNo = intval(trim($urunNo));
+                $kayitlar = DB::table('tbPersonelGorev')
+                    ->where('AraUrunAdiNo', $intUrnNo)
+                    ->get();
+                
+                if ($kayitlar->isNotEmpty()) {
+                    foreach ($kayitlar as $kayit) {
+                        $sonUrunMu = false;
+                        $uretilebilecekMaksimumAdet = $this->adetBelirle(strval($kayit->AraUrunAdiNo));
+                        if ($uretilebilecekMaksimumAdet < 0) {
+                            $uretilebilecekMaksimumAdet = intval($kayit->Adet);
+                        }
+                        
+                        $bekleyenAdet = intval($kayit->BekleyenAdet ?? 0);
+                        $adet = intval($kayit->Adet ?? 0);
+                        
+                        if (($adet + $bekleyenAdet) >= $uretilebilecekMaksimumAdet) {
+                            $eskiAdet = $adet;
+                            $newAdet = $uretilebilecekMaksimumAdet;
+                            $newBekleyen = $bekleyenAdet - ($uretilebilecekMaksimumAdet - $eskiAdet);
+                            if ($newBekleyen < 0) $newBekleyen = 0;
+                            
+                            DB::table('tbPersonelGorev')->where('No', $kayit->No)->update([
+                                'Adet' => $newAdet,
+                                'BekleyenAdet' => $newBekleyen
+                            ]);
+                        } else if (($adet + $bekleyenAdet) < $uretilebilecekMaksimumAdet) {
+                            $newAdet = $adet + $bekleyenAdet;
+                            $newBekleyen = 0;
+                            
+                            DB::table('tbPersonelGorev')->where('No', $kayit->No)->update([
+                                'Adet' => $newAdet,
+                                'BekleyenAdet' => $newBekleyen
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($sonUrunMu) {
+            $intUrnNo = intval($araUrunNo);
+            $kayitlar = DB::table('tbBolumAraStok')
+                ->where('AraUrunAdiNo', $intUrnNo)
+                ->get();
+            
+            if ($kayitlar->isNotEmpty()) {
+                foreach ($kayitlar as $kayit) {
+                    DB::table('tbBolumAraStok')->where('No', $kayit->No)->update([
+                        'TamponMiktar' => $kayit->Adet
+                    ]);
+                }
+            }
+        }
     }
 }

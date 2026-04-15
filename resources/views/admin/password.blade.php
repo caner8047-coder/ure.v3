@@ -4,8 +4,13 @@
 @section('content')
 <div class="row justify-content-center">
     <div class="col-md-5">
-        <div class="card shadow-sm mt-3">
-            <div class="card-header bg-primary text-white"><i class="bi bi-key me-1"></i>Şifre Değiştir</div>
+        <div class="panel-surface mt-3">
+            <div class="orders-panel-heading mb-4">
+                <div>
+                    <p>Guvenlik</p>
+                    <h3><i class="bi bi-key text-muted me-2"></i>Şifre Değiştir</h3>
+                </div>
+            </div>
             <div class="card-body">
                 <form method="POST" action="{{ route('admin.password.update') }}" id="passwordForm">
                     @csrf

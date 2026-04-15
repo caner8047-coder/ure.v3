@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\DB;
  */
 class TopluIsEmriApiController extends Controller
 {
+    public function __construct(
+        protected \App\Services\WorkOrderService $workOrderService
+    ) {}
+
     public function handleEndpoint(Request $request)
     {
         $action = $request->query('action', '');
@@ -84,33 +88,13 @@ class TopluIsEmriApiController extends Controller
                 $matchedId = intval($matchedDbId);
 
                 if ($matchType === 'Nihai') {
-                    $araAdlarYol = trim(DB::table('tbUrunler')->where('No', $matchedId)->value('AraAdlarYol') ?? '');
-
-                    if (!empty($araAdlarYol)) {
-                        $adimlar = preg_split('/[→>]|->/', $araAdlarYol);
-                        foreach ($adimlar as $adim) {
-                            $araUrunAdi = trim($adim);
-                            if (empty($araUrunAdi)) continue;
-
-                            $araUrun = DB::table('tbAraUrun')
-                                ->where('AraUrunAdi', $araUrunAdi)
-                                ->select('No', 'Performans', 'BolumAdiNo')
-                                ->first();
-
-                            if ($araUrun) {
-                                $this->insertGorev($matchedId, $araUrun->No, $adet, intval($araUrun->Performans ?? 0), intval($araUrun->BolumAdiNo ?? 0));
-                            }
-                        }
-                    }
+                    $result = $this->workOrderService->createWorkOrderForProduct($matchedId, $adet, 'StokHaric', $urunAdi);
                 } else {
-                    $araUrun = DB::table('tbAraUrun')
-                        ->where('No', $matchedId)
-                        ->select('Performans', 'BolumAdiNo')
-                        ->first();
+                    $result = $this->workOrderService->createWorkOrderForComponent($matchedId, $adet, 'StokHaric');
+                }
 
-                    $performans = intval($araUrun->Performans ?? 0);
-                    $bolumAdiNo = intval($araUrun->BolumAdiNo ?? 0);
-                    $this->insertGorev(0, $matchedId, $adet, $performans, $bolumAdiNo);
+                if (!($result['success'] ?? false)) {
+                    throw new \RuntimeException($result['message'] ?? 'İş emri oluşturulamadı.');
                 }
 
                 $created++;
@@ -126,18 +110,6 @@ class TopluIsEmriApiController extends Controller
             'failed' => $failed,
             'errors' => $errors,
             'message' => $created . ' is emri olusturuldu. ' . $failed . ' hata.',
-        ]);
-    }
-
-    private function insertGorev(int $urunIDNo, int $araUrunAdiNo, int $adet, int $performans, int $bolumAdiNo)
-    {
-        $now = now()->format('d/m/Y H:i');
-        DB::table('tbGorevler')->insert([
-            'UrunIDNo' => $urunIDNo,
-            'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
-            'ToplamAdet' => $adet,
-            'GorevBaslamaTarihi' => $now,
-            'PersonelNo' => null,
         ]);
     }
 

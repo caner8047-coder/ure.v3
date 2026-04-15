@@ -196,6 +196,9 @@ class OrderSyncService
                         'EslesenUrunTur' => $eslesenUrunTur,
                         'EslesmePuani' => $eslesmePuani,
                         'EslesmeYontemi' => $eslesmeYontemi,
+                        'SetMi' => 0,
+                        'SetNo' => null,
+                        'AnaSetSatirNo' => null,
                         'YuklemeTarihi' => now(),
                     ], 'No');
 
