@@ -24,12 +24,13 @@ class OrderToWorkOrderService
      * @param array $satirNolar tbSiparisSatir.No listesi
      * @param int $surplus Stok ilavesi (ek üretim adedi)
      */
-    public function createOrderWorkOrders(array $satirNolar, int $surplus = 0): array
+    public function createOrderWorkOrders(array $satirNolar, int $surplus = 0, string $tur = 'Nihai', $altBilesenNo = null): array
     {
         if (empty($satirNolar)) {
             return ['success' => false, 'message' => 'Satir numarasi bulunamadi.'];
         }
 
+        $isBulkRequest = count($satirNolar) > 1;
         $created = 0;
         $failed = 0;
         $skipped = 0;
@@ -69,6 +70,7 @@ class OrderToWorkOrderService
 
             foreach ($satirNolar as $satirNo) {
                 $item = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+                $beforeItem = $item;
 
                 if (!$item) {
                     $failed++;
@@ -78,6 +80,24 @@ class OrderToWorkOrderService
 
                 if ($item->Durum === 'IsEmriVerildi') {
                     $skipped++;
+                    continue;
+                }
+
+                if (intval($item->Aktif ?? 0) !== 1) {
+                    $skipped++;
+                    $errors[] = "Pasif siparişe iş emri verilemez: {$item->SiparisNo}";
+                    continue;
+                }
+
+                if (($item->Durum ?? '') !== 'UretimBekliyor') {
+                    $skipped++;
+                    $errors[] = "Bu durumdaki siparişe iş emri verilemez: {$item->SiparisNo} ({$item->Durum})";
+                    continue;
+                }
+
+                if (!empty($item->BagliOlduguOzelUretimNo)) {
+                    $skipped++;
+                    $errors[] = "GİED ile rezerve edilmiş siparişe ikinci kez iş emri verilemez: {$item->SiparisNo}";
                     continue;
                 }
 
@@ -91,21 +111,39 @@ class OrderToWorkOrderService
                 }
 
                 $stokDurum = 'StokDahil';
-                $tamponDusumleri = [];
-                $gorevNo = 0;
-                $sistemUrunAdi = '';
+                $traceContext = [
+                    'siparisSatirNo' => intval($item->No ?? 0),
+                    'siparisNo' => (string) ($item->SiparisNo ?? ''),
+                ];
 
-                if ($eslesenUrunTur === 'Nihai') {
-                    $result = $this->workOrderService->createWorkOrderForProduct(
-                        $eslesenUrunNo,
+                // Eğer kullanıcı spesifik bir alt bileşen seçtiyse onu kullan
+                $hedefNo = ($altBilesenNo && intval($altBilesenNo) > 0) ? intval($altBilesenNo) : $eslesenUrunNo;
+
+                // İş emri oluşturma — seçilen seviyeye göre yönlendir
+                if ($tur === 'Ara' || $tur === 'HamMadde') {
+                    // Ara Mamül veya Ham Madde: createLegacyManualWorkOrder kullan
+                    $result = $this->workOrderService->createLegacyManualWorkOrder(
+                        $hedefNo,
+                        $tur === 'HamMadde' ? 'Ham Madde' : 'Ara Mamül',
                         intval($item->Adet),
-                        $stokDurum
+                        $tur === 'HamMadde' ? 'StokHaric' : $stokDurum,
+                        '',
+                        $traceContext
+                    );
+                } elseif ($eslesenUrunTur === 'Nihai') {
+                    $result = $this->workOrderService->createWorkOrderForProduct(
+                        $hedefNo,
+                        intval($item->Adet),
+                        $stokDurum,
+                        '',
+                        $traceContext
                     );
                 } else {
                     $result = $this->workOrderService->createWorkOrderForComponent(
-                        $eslesenUrunNo,
+                        $hedefNo,
                         intval($item->Adet),
-                        $stokDurum
+                        $stokDurum,
+                        $traceContext
                     );
                 }
 
@@ -137,6 +175,19 @@ class OrderToWorkOrderService
                         $eslesenUrunNo, $eslesenUrunTur, $item->KargoSonTeslim
                     );
 
+                    $this->logCreatedWorkOrderEvent(
+                        $beforeItem,
+                        DB::table('tbSiparisSatir')->where('No', $satirNo)->first(),
+                        $gorevNo,
+                        $isBulkRequest,
+                        [
+                            'tur' => $tur,
+                            'alt_bilesen_no' => $altBilesenNo ? intval($altBilesenNo) : null,
+                            'surplus' => $surplus,
+                            'sistem_urun_adi' => $sistemUrunAdi,
+                        ]
+                    );
+
                     $created++;
                 } else {
                     $failed++;
@@ -159,5 +210,46 @@ class OrderToWorkOrderService
             DB::rollBack();
             return ['success' => false, 'message' => 'Hata: ' . $ex->getMessage()];
         }
+    }
+
+    private function logCreatedWorkOrderEvent(
+        ?object $beforeItem,
+        ?object $afterItem,
+        int $gorevNo,
+        bool $isBulkRequest,
+        array $context = []
+    ): void {
+        if (!$beforeItem || !$afterItem || $gorevNo <= 0) {
+            return;
+        }
+
+        app(WorkOrderEventLogger::class)->log([
+            'event_type' => $isBulkRequest ? 'work_order_created_bulk' : 'work_order_created_single',
+            'aggregate_type' => 'order_item',
+            'aggregate_id' => intval($afterItem->No ?? 0),
+            'order_item_no' => intval($afterItem->No ?? 0),
+            'order_no' => (string) ($afterItem->SiparisNo ?? ''),
+            'work_order_no' => $gorevNo,
+            'status_before' => $beforeItem->Durum ?? null,
+            'status_after' => $afterItem->Durum ?? null,
+            'title_human' => $isBulkRequest ? 'Toplu is emri verildi' : 'Siparise is emri verildi',
+            'next_step_human' => 'Havuz veya personel gorevi takibi yapilmali.',
+            'payload_before' => $this->serializeRecord($beforeItem),
+            'payload_after' => $this->serializeRecord($afterItem),
+            'context' => $context,
+        ]);
+    }
+
+    private function serializeRecord(object|array|null $record): ?array
+    {
+        if ($record === null) {
+            return null;
+        }
+
+        if (is_array($record)) {
+            return $record;
+        }
+
+        return json_decode(json_encode($record, JSON_UNESCAPED_UNICODE), true);
     }
 }

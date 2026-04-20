@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Models\Personnel;
 
 /**
@@ -25,6 +26,66 @@ class PersonnelPanelController extends Controller
     private function approvedApprovalSql(string $column = 'Onay'): string
     {
         return "({$column} = 1 OR {$column} = '1' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'true')";
+    }
+
+    private function serializeRecord(object|array|null $record): ?array
+    {
+        if ($record === null) {
+            return null;
+        }
+
+        if (is_array($record)) {
+            return $record;
+        }
+
+        return json_decode(json_encode($record, JSON_UNESCAPED_UNICODE), true);
+    }
+
+    private function buildTaskEventBase(object $task): array
+    {
+        $orderItemNo = intval($task->SiparisSatirNo ?? 0);
+        $orderNo = trim((string) ($task->SiparisNo ?? ''));
+        $workOrderNo = null;
+
+        if ($orderItemNo > 0 && Schema::hasTable('tbSiparisSatir')) {
+            $orderRow = DB::table('tbSiparisSatir')
+                ->where('No', $orderItemNo)
+                ->select('SiparisNo', 'GorevNo')
+                ->first();
+
+            if ($orderRow) {
+                if ($orderNo === '') {
+                    $orderNo = trim((string) ($orderRow->SiparisNo ?? ''));
+                }
+
+                $resolvedWorkOrderNo = intval($orderRow->GorevNo ?? 0);
+                $workOrderNo = $resolvedWorkOrderNo > 0 ? $resolvedWorkOrderNo : null;
+            }
+        }
+
+        $taskNo = intval($task->No ?? 0);
+
+        return [
+            'aggregate_type' => $orderItemNo > 0 ? 'order_item' : 'personnel_task',
+            'aggregate_id' => $orderItemNo > 0 ? $orderItemNo : max(1, $taskNo),
+            'order_item_no' => $orderItemNo > 0 ? $orderItemNo : null,
+            'order_no' => $orderNo !== '' ? $orderNo : null,
+            'work_order_no' => $workOrderNo,
+            'personnel_task_no' => $taskNo > 0 ? $taskNo : null,
+        ];
+    }
+
+    private function logTaskEvent(string $eventType, object $task, ?object $afterTask = null, array $attributes = []): void
+    {
+        app(\App\Services\WorkOrderEventLogger::class)->log(array_merge(
+            $this->buildTaskEventBase($task),
+            [
+                'event_type' => $eventType,
+                'payload_before' => $this->serializeRecord($task),
+                'payload_after' => $this->serializeRecord($afterTask),
+            ],
+            $attributes
+        ));
     }
 
     /** Dashboard istatistikleri */
@@ -129,6 +190,9 @@ class PersonnelPanelController extends Controller
                 return ['success' => false, 'message' => 'Görev bulunamadı'];
             }
 
+            $linkedOrderBefore = intval($gorev->SiparisSatirNo ?? 0) > 0 && Schema::hasTable('tbSiparisSatir')
+                ? DB::table('tbSiparisSatir')->where('No', intval($gorev->SiparisSatirNo))->first()
+                : null;
             $gerceklesenAdet = min($adet, intval($gorev->BekleyenAdet ?? 0));
             if ($gerceklesenAdet <= 0) {
                 return ['success' => false, 'message' => 'Tamamlanacak adet kalmamış.'];
@@ -162,6 +226,61 @@ class PersonnelPanelController extends Controller
                     'TamponMiktar' => 0,
                 ]);
             }
+
+            // ─── Hayalet sipariş önleme: Görev tamamlandıysa bağlı siparişi kapat ───
+            $sipSatirNo = intval($gorev->SiparisSatirNo ?? 0);
+            if ($yeniBekleyen <= 0 && $sipSatirNo > 0) {
+                $kalanHavuz = intval(DB::table('tbBolumHavuz')
+                    ->where('SiparisSatirNo', $sipSatirNo)->count());
+
+                $kalanAktifGorev = intval(DB::table('tbPersonelGorev')
+                    ->where('SiparisSatirNo', $sipSatirNo)
+                    ->where(function ($q) {
+                        $q->where('BekleyenAdet', '>', 0)
+                          ->orWhereNull('Onay')
+                          ->orWhere('Onay', 0)
+                          ->orWhere('Onay', '0')
+                          ->orWhereRaw("LOWER(TRIM(CAST(Onay AS CHAR))) = 'false'");
+                    })->count());
+
+                if ($kalanHavuz <= 0 && $kalanAktifGorev <= 0) {
+                    $siparis = DB::table('tbSiparisSatir')
+                        ->where('No', $sipSatirNo)
+                        ->where('Durum', 'IsEmriVerildi')
+                        ->first();
+
+                    if ($siparis) {
+                        $isOzelUretim = str_starts_with($siparis->Musteri ?? '', 'ÖZEL ÜRETİM');
+                        DB::table('tbSiparisSatir')->where('No', $sipSatirNo)->update([
+                            'Durum' => $isOzelUretim ? 'StokKarsilandi' : 'UretimdenKarsilaniyor',
+                            'GuncellemeTarihi' => now(),
+                        ]);
+                    }
+                }
+            }
+
+            $updatedGorev = DB::table('tbPersonelGorev')->where('No', $id)->first();
+            $linkedOrderAfter = intval($gorev->SiparisSatirNo ?? 0) > 0 && Schema::hasTable('tbSiparisSatir')
+                ? DB::table('tbSiparisSatir')->where('No', intval($gorev->SiparisSatirNo))->first()
+                : null;
+
+            $this->logTaskEvent(
+                $yeniBekleyen <= 0 ? 'production_completed_full' : 'production_completed_partial',
+                $gorev,
+                $updatedGorev,
+                [
+                    'status_before' => $linkedOrderBefore->Durum ?? null,
+                    'status_after' => $linkedOrderAfter->Durum ?? null,
+                    'next_step_human' => $yeniBekleyen <= 0
+                        ? 'Kaydin havuz ve siparis durumu kontrol edilmeli.'
+                        : 'Kalan miktar icin uretim devam ediyor.',
+                    'context' => [
+                        'completed_amount' => $gerceklesenAdet,
+                        'remaining_amount' => $yeniBekleyen,
+                        'linked_order_after' => $this->serializeRecord($linkedOrderAfter),
+                    ],
+                ]
+            );
 
             return [
                 'success' => true,
@@ -203,6 +322,7 @@ class PersonnelPanelController extends Controller
         $personelNo = $this->personelNo($request);
         $adet = intval($request->input('adet', 0));
         $sonuc = DB::transaction(function () use ($personelNo, $adet, $id) {
+            $bomService = app(\App\Services\BomService::class);
             $personel = DB::table('tbPersonel')
                 ->where('PersonelNo', $personelNo)
                 ->lockForUpdate()
@@ -238,7 +358,7 @@ class PersonnelPanelController extends Controller
                 ->where('No', $id)
                 ->update(['Adet' => intval($havuz->Adet ?? 0) - $alinacakAdet]);
 
-            DB::table('tbPersonelGorev')->insert([
+            $taskId = DB::table('tbPersonelGorev')->insertGetId(array_merge([
                 'UrunIDNo' => $havuz->UrunIDNo,
                 'GorevBaslamaTarihi' => now()->format('d/m/Y H:i'),
                 'PersonelNo' => $personelNo,
@@ -247,6 +367,26 @@ class PersonnelPanelController extends Controller
                 'Onay' => 'false',
                 'AraUrunAdiNo' => $havuz->AraUrunAdiNo,
                 'BolumAdiNo' => $havuz->BolumAdiNo,
+            ], $bomService->buildTracePayload($bomService->traceContextFromRecord($havuz))));
+
+            $createdTask = DB::table('tbPersonelGorev')->where('No', $taskId)->first();
+            $this->logTaskEvent('personnel_task_taken', $havuz, $createdTask, [
+                'aggregate_type' => intval($createdTask->SiparisSatirNo ?? 0) > 0 ? 'order_item' : 'personnel_task',
+                'aggregate_id' => intval($createdTask->SiparisSatirNo ?? 0) > 0
+                    ? intval($createdTask->SiparisSatirNo)
+                    : intval($createdTask->No ?? $taskId),
+                'order_item_no' => intval($createdTask->SiparisSatirNo ?? 0) > 0 ? intval($createdTask->SiparisSatirNo) : null,
+                'order_no' => trim((string) ($createdTask->SiparisNo ?? $havuz->SiparisNo ?? '')) ?: null,
+                'personnel_task_no' => intval($createdTask->No ?? $taskId),
+                'status_before' => 'HavuzdaBekliyor',
+                'status_after' => 'Personelde',
+                'next_step_human' => 'Personelin uretim girisi yapmasi bekleniyor.',
+                'payload_before' => $this->serializeRecord($havuz),
+                'payload_after' => $this->serializeRecord($createdTask),
+                'context' => [
+                    'taken_amount' => $alinacakAdet,
+                    'pool_no' => intval($havuz->No ?? 0),
+                ],
             ]);
 
             return ['success' => true, 'message' => $alinacakAdet . ' adet görev alındı.'];
@@ -375,7 +515,7 @@ class PersonnelPanelController extends Controller
 
     /**
      * Personel görevini sil → havuza geri aktarma (E5: PersonelGorev.aspx.cs gridService_RowDeleting)
-     * Eğer görev "Üretimde" durumdaysa, üretilen miktarı stoka geri ekler (E6: iptalEdilenStogaEkle)
+     * Sadece tamamlanmamış miktarı havuza iade eder.
      */
     public function deleteTask(Request $request, $id)
     {
@@ -393,43 +533,74 @@ class PersonnelPanelController extends Controller
             }
 
             $araUrunAdiNo = intval($gorev->AraUrunAdiNo);
-            $adet = intval($gorev->Adet ?? 0);
-            $bekleyenAdet = intval($gorev->BekleyenAdet ?? 0);
-            $toplam = $adet + $bekleyenAdet;
-
-            // E6: iptalEdilenStogaEkle — Üretimde iken iptal edilen miktar varsa stoktan düş
-            // ASP.NET mantığı: Adet-BekleyenAdet = üretilmiş adet, stoğa geri eklenir
-            $uretilenAdet = $adet - $bekleyenAdet;
-            if ($uretilenAdet > 0) {
-                $stok = DB::table('tbBolumAraStok')
-                    ->where('AraUrunAdiNo', $araUrunAdiNo)
-                    ->first();
-                if ($stok) {
-                    // Üretimi iptal edilen miktar stoğa geri ekleniyor
-                    DB::table('tbBolumAraStok')
-                        ->where('AraUrunAdiNo', $araUrunAdiNo)
-                        ->update(['Adet' => intval($stok->Adet) + $uretilenAdet]);
-                }
-            }
+            $bekleyenAdet = max(0, intval($gorev->BekleyenAdet ?? 0));
 
             // Görevi sil
             DB::table('tbPersonelGorev')->where('No', $id)->delete();
 
-            // E5: Havuza geri aktarma — minAraUrunUretimiDenetle ile
             $bomService = app(\App\Services\BomService::class);
-            $bomService->minAraUrunUretimiDenetle(
-                intval($gorev->UrunIDNo ?? 0),
-                '',
-                strval($araUrunAdiNo),
-                $toplam,
-                'Personel görev iptal — havuza iade',
-                'StokHaric'
-            );
+            if ($bekleyenAdet > 0) {
+                $tamponDusumleri = [];
+                $bomService->minAraUrunUretimiDenetle(
+                    intval($gorev->UrunIDNo ?? 0),
+                    '',
+                    strval($araUrunAdiNo),
+                    $bekleyenAdet,
+                    'Personel görev iptal — havuza iade',
+                    'StokHaric',
+                    $tamponDusumleri,
+                    $bomService->traceContextFromRecord($gorev)
+                );
+            }
 
-            // personelGorevTabloGuncelle çağrısı
             $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
 
-            return ['success' => true, 'message' => 'Görev silindi ve havuza geri aktarıldı.'];
+            // ─── Hayalet sipariş önleme: Bağlı siparişi kontrol et ───
+            $sipSatirNo = intval($gorev->SiparisSatirNo ?? 0);
+            $linkedOrderBefore = $sipSatirNo > 0 && Schema::hasTable('tbSiparisSatir')
+                ? DB::table('tbSiparisSatir')->where('No', $sipSatirNo)->first()
+                : null;
+            if ($sipSatirNo > 0) {
+                $kalanHavuz = intval(DB::table('tbBolumHavuz')
+                    ->where('SiparisSatirNo', $sipSatirNo)->count());
+                $kalanGorev = intval(DB::table('tbPersonelGorev')
+                    ->where('SiparisSatirNo', $sipSatirNo)->count());
+
+                if ($kalanHavuz <= 0 && $kalanGorev <= 0) {
+                    DB::table('tbSiparisSatir')
+                        ->where('No', $sipSatirNo)
+                        ->where('Durum', 'IsEmriVerildi')
+                        ->update([
+                            'Durum' => 'UretimBekliyor',
+                            'GorevNo' => null,
+                            'IsEmriTarihi' => null,
+                            'GuncellemeTarihi' => now(),
+                        ]);
+                }
+            }
+
+            $linkedOrderAfter = $sipSatirNo > 0 && Schema::hasTable('tbSiparisSatir')
+                ? DB::table('tbSiparisSatir')->where('No', $sipSatirNo)->first()
+                : null;
+
+            $this->logTaskEvent('personnel_task_deleted', $gorev, null, [
+                'status_before' => $linkedOrderBefore->Durum ?? null,
+                'status_after' => $linkedOrderAfter->Durum ?? null,
+                'next_step_human' => $bekleyenAdet > 0
+                    ? 'Kalan miktar havuza geri dondu; yeniden planlama yapilabilir.'
+                    : 'Tamamlanan miktar stokta birakildi, kayit kontrol edilmeli.',
+                'context' => [
+                    'returned_amount' => $bekleyenAdet,
+                    'linked_order_after' => $this->serializeRecord($linkedOrderAfter),
+                ],
+            ]);
+
+            return [
+                'success' => true,
+                'message' => $bekleyenAdet > 0
+                    ? "Görev silindi ve {$bekleyenAdet} adet havuza geri aktarıldı."
+                    : 'Görev silindi. Tamamlanan üretim stokta bırakıldı.',
+            ];
         });
 
         return response()->json($sonuc, ($sonuc['success'] ?? false) ? 200 : 422);

@@ -11,6 +11,7 @@ use App\Http\Controllers\AdminDatabaseController;
 use App\Http\Controllers\TopluIsEmriApiController;
 use App\Http\Controllers\PersonnelPanelController;
 use App\Http\Controllers\ProductionPlanningController;
+use App\Http\Controllers\WorkOrderCenterController;
 
 Route::get('/', function () {
     if (!Auth::check()) {
@@ -22,6 +23,7 @@ Route::get('/', function () {
 
 // ===== API Endpoints (Backward-compatible) =====
 Route::any('/SiparisApi.ashx', [SiparisApiController::class, 'handleEndpoint'])
+    ->middleware(['auth', 'admin'])
     ->withoutMiddleware([
         \Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class,
         \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
@@ -29,6 +31,7 @@ Route::any('/SiparisApi.ashx', [SiparisApiController::class, 'handleEndpoint'])
     ]);
 
 Route::any('/TopluIsEmriApi.ashx', [TopluIsEmriApiController::class, 'handleEndpoint'])
+    ->middleware(['auth', 'admin'])
     ->withoutMiddleware([
         \Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class,
         \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class,
@@ -80,6 +83,7 @@ Route::prefix('api/database')->middleware(['auth', 'admin'])->group(function () 
     Route::get('/personnel-workload', [AdminDatabaseController::class, 'getPersonnelWorkload']);
     Route::get('/pool-tasks', [AdminDatabaseController::class, 'getPoolTasks']);
     Route::post('/pool-tasks/{id}/assign', [AdminDatabaseController::class, 'assignPoolTask']);
+    Route::post('/pool-tasks', [AdminDatabaseController::class, 'storePoolTask']);
     Route::put('/pool-tasks/{id}', [AdminDatabaseController::class, 'updatePoolTask']);
     Route::delete('/pool-tasks/{id}', [AdminDatabaseController::class, 'deletePoolTask']);
     Route::post('/pool-tasks/delete-by-product', [AdminDatabaseController::class, 'deletePoolTasksByProduct']);
@@ -173,7 +177,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/Istatistikler.aspx', function () { return redirect()->route('reports.statistics'); });
     Route::get('/IsEmriVer.aspx', function () { return redirect()->route('workorders.create'); });
     Route::get('/TopluIsEmriVerme.aspx', function () { return redirect()->route('workorders.bulk'); });
-    Route::get('/IsEmriGecmisi.aspx', function () { return redirect()->route('workorders.history'); });
+    Route::get('/IsEmriGecmisi.aspx', function () { return redirect()->route('workorders.center'); });
     Route::get('/GorevAtama.aspx', function () { return redirect()->route('tasks.assign'); });
     Route::get('/UretimBekleyenOzet.aspx', function () { return redirect()->route('production.pending'); });
     Route::get('/UretimPlanlama.aspx', function () { return redirect()->route('production.planning'); });
@@ -203,7 +207,8 @@ Route::middleware(['auth', 'admin'])->group(function () {
     // İş Emri
     Route::get('/is-emri-ver', function () { return view('workorders.create'); })->name('workorders.create');
     Route::get('/toplu-is-emri', function () { return view('workorders.bulk'); })->name('workorders.bulk');
-    Route::get('/is-emri-gecmisi', function () { return view('workorders.history'); })->name('workorders.history');
+    Route::get('/is-emri-merkezi', [WorkOrderCenterController::class, 'index'])->name('workorders.center');
+    Route::get('/is-emri-gecmisi', function () { return redirect()->route('workorders.center'); })->name('workorders.history');
 
     // Görev
     Route::get('/gorev-atama', function () { return view('tasks.assign'); })->name('tasks.assign');
@@ -231,6 +236,14 @@ Route::middleware(['auth', 'admin'])->group(function () {
         Illuminate\Support\Facades\Artisan::call('config:clear');
         return response()->json(['success' => true, 'message' => 'Tüm önbellek temizlendi.']);
     })->name('admin.clear-cache');
+
+    Route::prefix('api/work-order-center')->group(function () {
+        Route::get('/feed', [WorkOrderCenterController::class, 'feed']);
+        Route::get('/export', [WorkOrderCenterController::class, 'export']);
+        Route::get('/entity/{type}/{id}', [WorkOrderCenterController::class, 'entity'])->whereNumber('id');
+        Route::get('/timeline', [WorkOrderCenterController::class, 'timeline']);
+        Route::get('/lookups', [WorkOrderCenterController::class, 'lookups']);
+    });
 
     Route::get('/sifre-degistir', function () { return view('admin.password'); })->name('admin.password');
     Route::post('/sifre-degistir', [AuthController::class, 'changePassword'])->name('admin.password.update');

@@ -40,6 +40,8 @@ class LegacyWorkOrderWriter
             $payload = [
                 'No' => $nextNo,
                 'UrunIDNo' => $attributes['UrunIDNo'] ?? null,
+                'SiparisSatirNo' => !empty($attributes['SiparisSatirNo']) ? (int) $attributes['SiparisSatirNo'] : null,
+                'SiparisNo' => !empty($attributes['SiparisNo']) ? (string) $attributes['SiparisNo'] : null,
                 'GorevBaslamaTarihi' => $startedAt,
                 'GorevBitisTarihi' => $finishedAt,
                 'ToplamAdet' => (int) ($attributes['ToplamAdet'] ?? 0),

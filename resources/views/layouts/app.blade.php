@@ -13,7 +13,7 @@
                 ['route' => 'products.match', 'patterns' => ['products.match'], 'icon' => 'bi bi-link-45deg', 'label' => 'Ürün Eşleştirme'],
                 ['route' => 'orders.special', 'patterns' => ['orders.special'], 'icon' => 'bi bi-star', 'label' => 'Özel Üretim Takip'],
                 ['route' => 'workorders.bulk', 'patterns' => ['workorders.bulk'], 'icon' => 'bi bi-file-earmark-spreadsheet', 'label' => 'Excel\'den Toplu Sipariş'],
-                ['route' => 'workorders.history', 'patterns' => ['workorders.history'], 'icon' => 'bi bi-clock', 'label' => 'İş Emri Geçmişi'],
+                ['route' => 'workorders.center', 'patterns' => ['workorders.center', 'workorders.history'], 'icon' => 'bi bi-clock-history', 'label' => 'İş Emri Merkezi'],
             ],
         ],
         [

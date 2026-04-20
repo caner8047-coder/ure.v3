@@ -408,7 +408,7 @@ function loadPersonelTasks() {
 
             const html = Object.keys(groups).sort().map((rawDate) => {
                 const taskList = groups[rawDate];
-                const totalAmount = taskList.reduce((sum, task) => sum + (parseInt(task.Adet, 10) || 0) + (parseInt(task.BekleyenAdet, 10) || 0), 0);
+                const totalAmount = taskList.reduce((sum, task) => sum + (parseInt(task.Adet, 10) || 0), 0);
 
                 const cards = taskList.map((task) => {
                     const amount = parseInt(task.Adet, 10) || 0;

@@ -147,25 +147,30 @@ class ReportsController extends Controller
             $query->where('gr.PersonelNo', $request->input('personnel_id'));
         }
 
-        // Date Filtering
+        // Date Filtering — legacy varchar format (dd/MM/yyyy HH:mm) için STR_TO_DATE
         $dateFilter = $request->input('date_filter');
         if ($dateFilter && $dateFilter !== 'hepsi') {
             $now = now();
             if ($dateFilter === 'gun') {
-                $query->whereDate('gr.GorevBitisTarihi', $now->toDateString()); // Assuming formatting is parsable by MySQL/Laravel
+                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') = ?", [$now->toDateString()]);
             } elseif ($dateFilter === 'hafta') {
-                $query->whereBetween('gr.GorevBitisTarihi', [$now->startOfWeek()->toDateString(), $now->endOfWeek()->toDateString()]);
+                $start = $now->copy()->startOfWeek()->toDateString();
+                $end = $now->copy()->endOfWeek()->toDateString();
+                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') BETWEEN ? AND ?", [$start, $end]);
             } elseif ($dateFilter === 'ay') {
-                $query->whereMonth('gr.GorevBitisTarihi', $now->month)->whereYear('gr.GorevBitisTarihi', $now->year);
+                $query->whereRaw("MONTH(STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y')) = ? AND YEAR(STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y')) = ?", [$now->month, $now->year]);
             } elseif ($dateFilter === '6ay') {
-                $query->whereBetween('gr.GorevBitisTarihi', [$now->copy()->subMonths(6)->toDateString(), $now->toDateString()]);
+                $start = $now->copy()->subMonths(6)->toDateString();
+                $end = $now->toDateString();
+                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') BETWEEN ? AND ?", [$start, $end]);
             } elseif ($dateFilter === 'yil') {
-                $query->whereDate('gr.GorevBitisTarihi', '>=', $now->copy()->subYear()->toDateString());
+                $start = $now->copy()->subYear()->toDateString();
+                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') >= ?", [$start]);
             } elseif ($dateFilter === 'tarih') {
                 $start = $request->input('start_date');
                 $end = $request->input('end_date');
-                if ($start) $query->whereDate('gr.GorevBitisTarihi', '>=', $start);
-                if ($end) $query->whereDate('gr.GorevBitisTarihi', '<=', $end);
+                if ($start) $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') >= ?", [$start]);
+                if ($end) $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') <= ?", [$end]);
             }
         }
         

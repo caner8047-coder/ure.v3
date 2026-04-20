@@ -1186,9 +1186,10 @@
                             ? '<span class="badge-uretimde">🔨 ' + uretimdeAdet + '</span>'
                             : '<span style="color:#aaa;">—</span>');
 
-                    // Checkbox disabled only for Pasif and StokKarsilandi
-                    var cbDisabled = order.durum === 'Pasif' || order.durum === 'StokKarsilandi' || order.setMi;
+                    // Toplu aksiyon ve eşleştirme sadece üretim bekleyen aktif siparişlerde açık kalır
+                    var cbDisabled = order.durum === 'Pasif' || order.durum === 'StokKarsilandi' || order.durum === 'PasifDevamEden' || order.setMi;
                     var btnDisabled = order.durum === 'IsEmriVerildi' || order.durum === 'PasifDevamEden' || order.durum === 'UretimdenKarsilaniyor' || order.durum === 'Pasif' || order.durum === 'StokKarsilandi' || order.eslesenUrunNo <= 0 || order.setMi;
+                    var matchDisabled = order.durum !== 'UretimBekliyor' || order.setMi;
 
                     // Ürün Adı — set ise özel göster
                     var urunAdiDisplay = order.setMi
@@ -1198,7 +1199,7 @@
                     // Manuel select ve action — set parent'ta devre dışı
                     var selectHtml = order.setMi
                         ? '<span style="color:#888; font-size:0.78rem;">Bileşenlerde</span>'
-                        : '<select class="match-select" data-no="' + order.no + '" ' + (order.durum === 'IsEmriVerildi' || order.durum === 'StokKarsilandi' ? 'disabled' : '') + '>' + optionsHtml + '</select>';
+                        : '<select class="match-select" data-no="' + order.no + '" ' + (matchDisabled ? 'disabled' : '') + '>' + optionsHtml + '</select>';
 
                     var actionHtml = '';
                     if (order.setMi) {
@@ -1271,7 +1272,8 @@
                             }
 
                             var childUretimde = child.uretimdeAdet || 0;
-                            var childBtnDisabled = child.durum === 'IsEmriVerildi' || child.durum === 'UretimdenKarsilaniyor' || child.durum === 'Pasif' || child.durum === 'StokKarsilandi' || child.eslesenUrunNo <= 0;
+                            var childBtnDisabled = child.durum === 'IsEmriVerildi' || child.durum === 'PasifDevamEden' || child.durum === 'UretimdenKarsilaniyor' || child.durum === 'Pasif' || child.durum === 'StokKarsilandi' || child.eslesenUrunNo <= 0;
+                            var childMatchDisabled = child.durum !== 'UretimBekliyor';
 
                             var childActionHtml = '';
                             if (child.durum === 'IsEmriVerildi') {
@@ -1292,8 +1294,10 @@
                                                   '</div>';
                             }
 
+                            var childCbDisabled = child.durum === 'Pasif' || child.durum === 'StokKarsilandi' || child.durum === 'PasifDevamEden';
+
                             ctr.innerHTML =
-                                '<td><input type="checkbox" class="row-cb" data-no="' + child.no + '" onchange="onRowCheckChange(this)" /></td>' +
+                                '<td><input type="checkbox" class="row-cb" data-no="' + child.no + '" onchange="onRowCheckChange(this)" ' + (childCbDisabled ? 'disabled' : '') + ' /></td>' +
                                 '<td style="color:#8e44ad;">↳</td>' +
                                 '<td><strong>' + escapeHtml(child.siparisNo) + '</strong></td>' +
                                 '<td>' + escapeHtml(child.pazaryeri) + '</td>' +
@@ -1306,7 +1310,7 @@
                                 '<td></td>' +
                                 '<td>' + childDurumHtml + '</td>' +
                                 '<td>' + childMatchHtml + '</td>' +
-                                '<td><select class="match-select" data-no="' + child.no + '" ' + (child.durum === 'IsEmriVerildi' || child.durum === 'StokKarsilandi' ? 'disabled' : '') + '>' + optionsHtml + '</select></td>' +
+                                '<td><select class="match-select" data-no="' + child.no + '" ' + (childMatchDisabled ? 'disabled' : '') + '>' + optionsHtml + '</select></td>' +
                                 '<td>' + childActionHtml + '</td>';
 
                             tbody.appendChild(ctr);

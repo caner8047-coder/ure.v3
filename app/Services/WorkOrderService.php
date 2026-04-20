@@ -22,9 +22,15 @@ class WorkOrderService
     /**
      * Nihai ürün için iş emri oluştur — BOM ağacını traverse eder.
      */
-    public function createWorkOrderForProduct(int $urunIDNo, int $adet, string $stokDurum = 'StokDahil', string $aciklama = ''): array
+    public function createWorkOrderForProduct(
+        int $urunIDNo,
+        int $adet,
+        string $stokDurum = 'StokDahil',
+        string $aciklama = '',
+        array $traceContext = []
+    ): array
     {
-        return DB::transaction(function () use ($urunIDNo, $adet, $stokDurum, $aciklama) {
+        return DB::transaction(function () use ($urunIDNo, $adet, $stokDurum, $aciklama, $traceContext) {
             $product = DB::table('tbUrunler')->where('No', $urunIDNo)->first();
             if (!$product) {
                 return ['success' => false, 'message' => 'Ürün bulunamadı'];
@@ -46,7 +52,8 @@ class WorkOrderService
                 $adet,
                 $aciklama,
                 'StokHaric',
-                $tamponDusumleri
+                $tamponDusumleri,
+                $traceContext
             );
 
             if ($uretimAdedi > 0 && trim($this->bomService->birAdimOncesiUrunAdlari((string) $rootComponentNo)) !== '') {
@@ -57,7 +64,8 @@ class WorkOrderService
                     $yol,
                     $urunIDNo,
                     $recursiveStockMode,
-                    $tamponDusumleri
+                    $tamponDusumleri,
+                    $traceContext
                 );
             }
 
@@ -67,6 +75,8 @@ class WorkOrderService
                 'ToplamAdet' => $adet,
                 'BolumAdiNo' => (int) ($rootComponent->BolumAdiNo ?? 0),
                 'Performans' => $rootComponent->Performans ?? 0,
+                'SiparisSatirNo' => $traceContext['siparisSatirNo'] ?? null,
+                'SiparisNo' => $traceContext['siparisNo'] ?? null,
             ]);
 
             return [
@@ -81,9 +91,9 @@ class WorkOrderService
     /**
      * Ara ürün (bileşen) için doğrudan iş emri oluştur.
      */
-    public function createWorkOrderForComponent(int $araUrunNo, int $adet, string $stokDurum = 'StokDahil'): array
+    public function createWorkOrderForComponent(int $araUrunNo, int $adet, string $stokDurum = 'StokDahil', array $traceContext = []): array
     {
-        return DB::transaction(function () use ($araUrunNo, $adet, $stokDurum) {
+        return DB::transaction(function () use ($araUrunNo, $adet, $stokDurum, $traceContext) {
             $araUrun = DB::table('tbAraUrun')->where('No', $araUrunNo)->first();
             if (!$araUrun) {
                 return ['success' => false, 'message' => 'Ara ürün bulunamadı'];
@@ -101,7 +111,8 @@ class WorkOrderService
                 $adet,
                 '',
                 'StokHaric',
-                $tamponDusumleri
+                $tamponDusumleri,
+                $traceContext
             );
 
             if ($uretimAdedi > 0 && trim($this->bomService->birAdimOncesiUrunAdlari((string) $araUrunNo)) !== '') {
@@ -112,7 +123,8 @@ class WorkOrderService
                     $yol,
                     0,
                     $recursiveStockMode,
-                    $tamponDusumleri
+                    $tamponDusumleri,
+                    $traceContext
                 );
             }
 
@@ -122,6 +134,8 @@ class WorkOrderService
                 'ToplamAdet' => $adet,
                 'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
                 'Performans' => $araUrun->Performans ?? 0,
+                'SiparisSatirNo' => $traceContext['siparisSatirNo'] ?? null,
+                'SiparisNo' => $traceContext['siparisNo'] ?? null,
             ]);
 
             return [
@@ -177,7 +191,8 @@ class WorkOrderService
         string $tur,
         int $adet,
         string $stokDurum = 'StokDahil',
-        string $aciklama = ''
+        string $aciklama = '',
+        array $traceContext = []
     ): array {
         $normalizedType = $this->normalizeManualType($tur);
 
@@ -197,11 +212,12 @@ class WorkOrderService
                     $adet,
                     $stokDurum,
                     $aciklama,
-                    true
+                    true,
+                    $traceContext
                 );
             }
 
-            return $this->createWorkOrderForProduct($selectedNo, $adet, $stokDurum, $aciklama);
+            return $this->createWorkOrderForProduct($selectedNo, $adet, $stokDurum, $aciklama, $traceContext);
         }
 
         if ($normalizedType === 'Ham Madde') {
@@ -211,7 +227,8 @@ class WorkOrderService
                 $adet,
                 'StokHaric',
                 $aciklama,
-                false
+                false,
+                $traceContext
             );
         }
 
@@ -221,7 +238,8 @@ class WorkOrderService
             $adet,
             $stokDurum,
             $aciklama,
-            true
+            true,
+            $traceContext
         );
     }
 
@@ -231,9 +249,10 @@ class WorkOrderService
         int $adet,
         string $stokDurum,
         string $aciklama,
-        bool $withRecursion
+        bool $withRecursion,
+        array $traceContext = []
     ): array {
-        return DB::transaction(function () use ($araUrunNo, $legacyUrunId, $adet, $stokDurum, $aciklama, $withRecursion) {
+        return DB::transaction(function () use ($araUrunNo, $legacyUrunId, $adet, $stokDurum, $aciklama, $withRecursion, $traceContext) {
             $araUrun = DB::table('tbAraUrun')->where('No', $araUrunNo)->first();
             if (!$araUrun) {
                 return ['success' => false, 'message' => 'Ara ürün bulunamadı'];
@@ -250,7 +269,8 @@ class WorkOrderService
                 $adet,
                 $aciklama,
                 'StokHaric',
-                $tamponDusumleri
+                $tamponDusumleri,
+                $traceContext
             );
 
             if (
@@ -265,7 +285,8 @@ class WorkOrderService
                     $yol,
                     $legacyUrunId,
                     $recursiveStockMode,
-                    $tamponDusumleri
+                    $tamponDusumleri,
+                    $traceContext
                 );
             }
 
@@ -276,6 +297,8 @@ class WorkOrderService
                 'ToplamAdet' => $adet,
                 'BolumAdiNo' => (int) ($araUrun->BolumAdiNo ?? 0),
                 'Performans' => $araUrun->Performans ?? 0,
+                'SiparisSatirNo' => $traceContext['siparisSatirNo'] ?? null,
+                'SiparisNo' => $traceContext['siparisNo'] ?? null,
             ]);
 
             $this->recordIssuedTask($araUrunNo, $adet, $aciklama);

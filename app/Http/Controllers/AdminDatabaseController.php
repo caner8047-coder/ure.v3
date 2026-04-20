@@ -5,10 +5,58 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Personnel;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Services\BomService;
 
 class AdminDatabaseController extends Controller
 {
+    private function serializeRecord(object|array|null $record): ?array
+    {
+        if ($record === null) {
+            return null;
+        }
+
+        if (is_array($record)) {
+            return $record;
+        }
+
+        return json_decode(json_encode($record, JSON_UNESCAPED_UNICODE), true);
+    }
+
+    private function buildTaskEventBase(object $task): array
+    {
+        $orderItemNo = intval($task->SiparisSatirNo ?? 0);
+        $orderNo = trim((string) ($task->SiparisNo ?? ''));
+        $workOrderNo = null;
+
+        if ($orderItemNo > 0 && Schema::hasTable('tbSiparisSatir')) {
+            $orderRow = DB::table('tbSiparisSatir')
+                ->where('No', $orderItemNo)
+                ->select('SiparisNo', 'GorevNo')
+                ->first();
+
+            if ($orderRow) {
+                if ($orderNo === '') {
+                    $orderNo = trim((string) ($orderRow->SiparisNo ?? ''));
+                }
+
+                $resolvedWorkOrderNo = intval($orderRow->GorevNo ?? 0);
+                $workOrderNo = $resolvedWorkOrderNo > 0 ? $resolvedWorkOrderNo : null;
+            }
+        }
+
+        $taskNo = intval($task->No ?? 0);
+
+        return [
+            'aggregate_type' => $orderItemNo > 0 ? 'order_item' : 'personnel_task',
+            'aggregate_id' => $orderItemNo > 0 ? $orderItemNo : max(1, $taskNo),
+            'order_item_no' => $orderItemNo > 0 ? $orderItemNo : null,
+            'order_no' => $orderNo !== '' ? $orderNo : null,
+            'work_order_no' => $workOrderNo,
+            'personnel_task_no' => $taskNo > 0 ? $taskNo : null,
+        ];
+    }
+
     // ============================================
     // PRODUCT SETTINGS API (UrunOzellikleriAyarlari)
     // ============================================
@@ -351,34 +399,53 @@ class AdminDatabaseController extends Controller
             $araUrunAdiNo = intval($havuz->AraUrunAdiNo);
             $personelNo = intval($personel->PersonelNo);
             $tarih = now()->format('d/m/Y') . ' 00:00';
+            $traceContext = $bomService->traceContextFromRecord($havuz);
 
-            $mevcutKayit = DB::table('tbPersonelGorev')
+            $mevcutKayitQuery = DB::table('tbPersonelGorev')
                 ->where('AraUrunAdiNo', $araUrunAdiNo)
                 ->where('PersonelNo', $personelNo)
                 ->where('Onay', 'true')
-                ->where(DB::raw('LEFT(GorevBaslamaTarihi, 10)'), '=', now()->format('d/m/Y'))
-                ->first();
+                ->where(DB::raw('LEFT(GorevBaslamaTarihi, 10)'), '=', now()->format('d/m/Y'));
+
+            $bomService->scopeQueryToTrace($mevcutKayitQuery, $traceContext, true);
+            $mevcutKayit = $mevcutKayitQuery->first();
+
+            $assignedTaskNo = null;
 
             if ($mevcutKayit) {
-                // Mevcut kaydı güncelle
-                DB::table('tbPersonelGorev')->where('No', $mevcutKayit->No)->update([
-                    'BekleyenAdet' => DB::raw("BekleyenAdet + {$yeniAdet}"),
-                    'Adet' => DB::raw("Adet + {$yeniAdet}"),
-                    'Onay' => 'false',
-                ]);
+                // ASP.NET PersonelGorevTablosunaEkle: mevcut kayıt varsa BOM limit kontrolü
+                $toplam = intval($mevcutKayit->BekleyenAdet) + $yeniAdet + intval($mevcutKayit->Adet);
+                $uretilebilecekMaks = $bomService->adetBelirle(strval($araUrunAdiNo));
+                if ($uretilebilecekMaks < 0) $uretilebilecekMaks = $toplam;
+
+                if ($toplam > $uretilebilecekMaks) {
+                    DB::table('tbPersonelGorev')->where('No', $mevcutKayit->No)->update([
+                        'Adet' => $uretilebilecekMaks,
+                        'BekleyenAdet' => $toplam - $uretilebilecekMaks,
+                    ]);
+                } else {
+                    DB::table('tbPersonelGorev')->where('No', $mevcutKayit->No)->update([
+                        'Adet' => $toplam,
+                        'BekleyenAdet' => 0,
+                    ]);
+                }
+
+                $assignedTaskNo = intval($mevcutKayit->No ?? 0);
             } else {
-                // Yeni kayıt
-                $effMax = min($uretilebilecekMax, $yeniAdet);
-                DB::table('tbPersonelGorev')->insert([
+                // ASP.NET PersonelGorevTablosunaEkle: yeni kayıt — BOM limit uygula
+                $effMax = ($uretilebilecekMax > $yeniAdet) ? $yeniAdet : $uretilebilecekMax;
+                if ($uretilebilecekMax < 0) $effMax = $yeniAdet;
+
+                $assignedTaskNo = DB::table('tbPersonelGorev')->insertGetId(array_merge([
                     'UrunIDNo' => $havuz->UrunIDNo,
                     'GorevBaslamaTarihi' => $tarih,
                     'PersonelNo' => $personelNo,
-                    'Adet' => $yeniAdet,
+                    'Adet' => $effMax,
                     'BekleyenAdet' => $yeniAdet,
                     'Onay' => 'false',
                     'AraUrunAdiNo' => $araUrunAdiNo,
                     'BolumAdiNo' => $havuz->BolumAdiNo,
-                ]);
+                ], $bomService->buildTracePayload($traceContext)));
             }
 
             // Havuz güncelle (ASP.NET mantığı: ToplamAdet -= yeniAdet, Adet -= min(yeniAdet,max))
@@ -398,6 +465,26 @@ class AdminDatabaseController extends Controller
 
             // personelGorevTabloGuncelle — görev atama sonrası senkronizasyon
             $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
+
+            if ($assignedTaskNo > 0) {
+                $assignedTask = DB::table('tbPersonelGorev')->where('No', $assignedTaskNo)->first();
+                if ($assignedTask) {
+                    app(\App\Services\WorkOrderEventLogger::class)->log(array_merge(
+                        $this->buildTaskEventBase($assignedTask),
+                        [
+                            'event_type' => 'task_assigned_by_admin',
+                            'next_step_human' => 'Atanan personelin gorevi uzerine alip uretim girisi yapmasi bekleniyor.',
+                            'payload_before' => $this->serializeRecord($havuz),
+                            'payload_after' => $this->serializeRecord($assignedTask),
+                            'context' => [
+                                'assigned_amount' => $yeniAdet,
+                                'pool_no' => intval($havuz->No ?? 0),
+                                'personnel_no' => $personelNo,
+                            ],
+                        ]
+                    ));
+                }
+            }
 
             return ['success' => true, 'message' => $yeniAdet . ' adet görev personele atandı.', 'status' => 200];
         });
@@ -423,11 +510,14 @@ class AdminDatabaseController extends Controller
                 $araUrunAdiNo = intval($havuz->AraUrunAdiNo);
                 $toplamAdet = intval($havuz->ToplamAdet);
 
-                // Tampon stoğu iade et (ASP.NET tamponStokKontrol mantığı)
+                // ASP.NET tamponStokKontrol: alt parçaların tamponlarını geri iade et
+                $bomService = app(BomService::class);
+                $bomService->tamponStokKontrol(strval($araUrunAdiNo), $toplamAdet);
+
+                // Direkt bu satırın tamponunu da iade et
                 $stok = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araUrunAdiNo)->first();
                 if ($stok) {
                     $yeniTampon = intval($stok->TamponMiktar) + $toplamAdet;
-                    // Tampon, stok adedini aşmamalı
                     $yeniTampon = min($yeniTampon, intval($stok->Adet));
                     DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araUrunAdiNo)->update([
                         'TamponMiktar' => $yeniTampon
@@ -437,8 +527,35 @@ class AdminDatabaseController extends Controller
                 DB::table('tbBolumHavuz')->where('No', $id)->delete();
 
                 // personelGorevTabloGuncelle — havuz değişimi sonrası senkronizasyon
-                $bomService = app(BomService::class);
                 $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
+
+                // ─── Hayalet sipariş önleme: Bağlı siparişi kontrol et ───
+                $sipSatirNo = intval($havuz->SiparisSatirNo ?? 0);
+                if ($sipSatirNo > 0) {
+                    $kalanHavuz = DB::table('tbBolumHavuz')
+                        ->where('SiparisSatirNo', $sipSatirNo)->count();
+                    $kalanGorev = DB::table('tbPersonelGorev')
+                        ->where('SiparisSatirNo', $sipSatirNo)
+                        ->where(function ($q) {
+                            $q->where('BekleyenAdet', '>', 0)
+                              ->orWhereNull('Onay')
+                              ->orWhere('Onay', 0)
+                              ->orWhere('Onay', '0')
+                              ->orWhereRaw("LOWER(TRIM(CAST(Onay AS CHAR))) = 'false'");
+                        })->count();
+
+                    if ($kalanHavuz <= 0 && $kalanGorev <= 0) {
+                        DB::table('tbSiparisSatir')
+                            ->where('No', $sipSatirNo)
+                            ->where('Durum', 'IsEmriVerildi')
+                            ->update([
+                                'Durum' => 'UretimBekliyor',
+                                'GorevNo' => null,
+                                'IsEmriTarihi' => null,
+                                'GuncellemeTarihi' => now(),
+                            ]);
+                    }
+                }
 
                 return ['success' => true, 'message' => 'Havuz kaydı silindi ve tampon stok güncellendi.'];
             });
@@ -461,18 +578,118 @@ class AdminDatabaseController extends Controller
                     return ['success' => false, 'message' => 'Havuz kaydı bulunamadı.'];
                 }
 
-                $newAdet = intval($request->input('adet', $havuz->Adet));
+                $bomService = app(BomService::class);
+                $araUrunAdiNo = strval($havuz->AraUrunAdiNo);
+
                 $newToplamAdet = intval($request->input('toplam_adet', $havuz->ToplamAdet));
+                $newAciklama = $request->input('aciklama', $havuz->Aciklama ?? '');
+
+                // ASP.NET AdminAnaSayfa RowUpdating: UretimAdetBelirle ile normalize
+                $yol = $bomService->tumYolHazirla($araUrunAdiNo);
+                $uretimAdet = $bomService->uretimAdetBelirle($araUrunAdiNo, $yol, $newToplamAdet);
+
+                // ASP.NET: AdetBelirle ile üretilebilir adet hesapla
+                $uretilebilecekUrunAdedi = $bomService->adetBelirle($araUrunAdiNo);
+                if ($uretilebilecekUrunAdedi < 0 || $uretilebilecekUrunAdedi > $uretimAdet) {
+                    $uretilebilecekUrunAdedi = $uretimAdet;
+                }
+
+                if ($uretimAdet <= 0) {
+                    return ['success' => false, 'message' => 'Toplam adet sıfırdan büyük olmalıdır.'];
+                }
 
                 DB::table('tbBolumHavuz')->where('No', $id)->update([
-                    'Adet' => $newAdet,
-                    'ToplamAdet' => $newToplamAdet,
+                    'Adet' => $uretilebilecekUrunAdedi,
+                    'ToplamAdet' => $uretimAdet,
+                    'Aciklama' => $newAciklama,
                 ]);
 
-                return ['success' => true, 'message' => 'Havuz kaydı güncellendi.'];
+                return ['success' => true, 'message' => 'Havuz kaydı güncellendi.', 'ara_urun_no' => $araUrunAdiNo];
             });
 
+            // Zincirleme havuz ve görev güncelleme
+            if (($result['success'] ?? false) && !empty($result['ara_urun_no'])) {
+                $bomService = app(BomService::class);
+                $bomService->sonrakiUrunAdetleriniGuncelle($result['ara_urun_no']);
+                $bomService->personelGorevTabloGuncelle($result['ara_urun_no']);
+            }
+
             return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()]);
+        }
+    }
+
+    // ==========================================
+    // HAVUZ — SATIR EKLEME (Manuel)
+    // ==========================================
+    public function storePoolTask(Request $request)
+    {
+        try {
+            $araUrunAdiNo = intval($request->input('ara_urun_no'));
+            $urunIDNo = intval($request->input('urun_id_no', 0));
+            $adet = intval($request->input('toplam_adet', $request->input('adet', 0)));
+            $aciklama = $request->input('aciklama', '');
+
+            if ($araUrunAdiNo <= 0 || $adet <= 0) {
+                return response()->json(['success' => false, 'message' => 'Ara ürün no ve adet gerekli.'], 422);
+            }
+
+            $bomService = app(BomService::class);
+
+            // Ara ürün bilgilerini al
+            $araUrun = DB::table('tbAraUrun')->where('No', $araUrunAdiNo)->first();
+            if (!$araUrun) {
+                return response()->json(['success' => false, 'message' => 'Ara ürün bulunamadı.'], 404);
+            }
+
+            $bolumAdiNo = intval($araUrun->BolumAdiNo ?? 0);
+            $araUrunAdi = $araUrun->AraUrunAdi ?? '';
+
+            // UrunIDNo belirleme
+            if ($urunIDNo <= 0) {
+                $urunIDNo = intval(
+                    DB::table('tbUrunler')
+                        ->whereRaw("AraAdlarYol LIKE ?", ['%' . $araUrunAdiNo . '%'])
+                        ->where('No', '!=', 502)
+                        ->value('No') ?? 10
+                );
+            }
+
+            // ASP.NET: AdetBelirle ile üretilebilir adet
+            $yol = $bomService->tumYolHazirla(strval($araUrunAdiNo));
+            $uretimAdet = $bomService->uretimAdetBelirle(strval($araUrunAdiNo), $yol, $adet);
+            $uretilebilirAdet = $bomService->adetBelirle(strval($araUrunAdiNo));
+
+            if ($uretilebilirAdet > $uretimAdet || $uretilebilirAdet < 0) {
+                $uretilebilirAdet = $uretimAdet;
+            }
+
+            if ($uretimAdet > 0) {
+                $guncelAciklama = $aciklama;
+                if (!empty($guncelAciklama)) {
+                    $bolumAdi = DB::table('tbBolum')->where('No', $bolumAdiNo)->value('BolumAdi') ?? '';
+                    $guncelAciklama = $bolumAdi . ': ' . trim($guncelAciklama);
+                }
+
+                DB::table('tbBolumHavuz')->insert([
+                    'UrunIDNo' => $urunIDNo,
+                    'GorevBaslangicTarihi' => now()->format('d/m/Y'),
+                    'GorevBaslangicSaati' => now()->format('H:i'),
+                    'Adet' => $uretilebilirAdet,
+                    'ToplamAdet' => $uretimAdet,
+                    'BolumAdiNo' => $bolumAdiNo,
+                    'Aciklama' => $guncelAciklama,
+                    'AraUrunAdiNo' => $araUrunAdiNo,
+                ]);
+
+                // Tampon stok düşümü
+                $bomService->araStokTamponAzalt(strval($araUrunAdiNo), $uretimAdet);
+
+                return response()->json(['success' => true, 'message' => 'Havuz kaydı eklendi.']);
+            }
+
+            return response()->json(['success' => false, 'message' => 'Üretim adeti sıfır veya yetersiz stok.'], 422);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()]);
         }
@@ -489,13 +706,25 @@ class AdminDatabaseController extends Controller
                 return response()->json(['success' => false, 'message' => 'Ürün No gerekli.']);
             }
 
-            $result = DB::transaction(function () use ($urunIDNo) {
+            $affectedAraNos = [];
+
+            $result = DB::transaction(function () use ($urunIDNo, &$affectedAraNos) {
                 $rows = DB::table('tbBolumHavuz')->where('UrunIDNo', $urunIDNo)->get();
 
                 foreach ($rows as $row) {
-                    $stok = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', intval($row->AraUrunAdiNo))->first();
+                    $araNo = intval($row->AraUrunAdiNo);
+                    if (!in_array($araNo, $affectedAraNos)) {
+                        $affectedAraNos[] = $araNo;
+                    }
+
+                    // ASP.NET tamponStokKontrol: alt parçaların tamponlarını geri iade et
+                    $bomService = app(BomService::class);
+                    $bomService->tamponStokKontrol(strval($araNo), intval($row->ToplamAdet));
+
+                    // Direkt bu satırın tamponunu da iade et
+                    $stok = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araNo)->first();
                     if ($stok) {
-                        DB::table('tbBolumAraStok')->where('AraUrunAdiNo', intval($row->AraUrunAdiNo))->update([
+                        DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araNo)->update([
                             'TamponMiktar' => intval($stok->TamponMiktar) + intval($row->ToplamAdet)
                         ]);
                     }
@@ -504,6 +733,14 @@ class AdminDatabaseController extends Controller
                 $deleted = DB::table('tbBolumHavuz')->where('UrunIDNo', $urunIDNo)->delete();
                 return ['success' => true, 'message' => $deleted . ' havuz kaydı silindi.', 'deleted' => $deleted];
             });
+
+            // ASP.NET AdminAnaSayfa RowDeleting: personelGorevTabloGuncelle
+            if (($result['success'] ?? false) && !empty($affectedAraNos)) {
+                $bomService = app(BomService::class);
+                foreach (array_unique($affectedAraNos) as $araNo) {
+                    $bomService->personelGorevTabloGuncelle(strval($araNo));
+                }
+            }
 
             return response()->json($result);
         } catch (\Exception $e) {
@@ -517,7 +754,9 @@ class AdminDatabaseController extends Controller
     public function deleteAllPoolTasks(Request $request)
     {
         try {
-            $result = DB::transaction(function () use ($request) {
+            $affectedAraNos = [];
+
+            $result = DB::transaction(function () use ($request, &$affectedAraNos) {
                 $query = DB::table('tbBolumHavuz');
 
                 // ASP.NET btnDeleteAll_Click: görünüm moduna göre silme
@@ -530,11 +769,20 @@ class AdminDatabaseController extends Controller
                 }
 
                 // Tampon stokları iade et (ASP.NET: Stoklar.tamponSifirla())
+                $bomService = app(BomService::class);
                 $rows = $query->get();
                 foreach ($rows as $row) {
-                    $stok = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', intval($row->AraUrunAdiNo))->first();
+                    $araNo = intval($row->AraUrunAdiNo);
+                    if (!in_array($araNo, $affectedAraNos)) {
+                        $affectedAraNos[] = $araNo;
+                    }
+
+                    // ASP.NET tamponStokKontrol: alt parçaların tamponlarını geri iade et
+                    $bomService->tamponStokKontrol(strval($araNo), intval($row->ToplamAdet));
+
+                    $stok = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araNo)->first();
                     if ($stok) {
-                        DB::table('tbBolumAraStok')->where('AraUrunAdiNo', intval($row->AraUrunAdiNo))->update([
+                        DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araNo)->update([
                             'TamponMiktar' => intval($stok->TamponMiktar) + intval($row->ToplamAdet)
                         ]);
                     }
@@ -553,6 +801,14 @@ class AdminDatabaseController extends Controller
                 $deleted = $delQuery->delete();
                 return ['success' => true, 'message' => $deleted . ' havuz kaydı silindi.', 'deleted' => $deleted];
             });
+
+            // ASP.NET: personelGorevTabloGuncelle
+            if (($result['success'] ?? false) && !empty($affectedAraNos)) {
+                $bomService = app(BomService::class);
+                foreach (array_unique($affectedAraNos) as $araNo) {
+                    $bomService->personelGorevTabloGuncelle(strval($araNo));
+                }
+            }
 
             return response()->json($result);
         } catch (\Exception $e) {

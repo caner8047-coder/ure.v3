@@ -97,6 +97,30 @@ class TopluIsEmriApiController extends Controller
                     throw new \RuntimeException($result['message'] ?? 'İş emri oluşturulamadı.');
                 }
 
+                $gorevNo = intval($result['gorevNo'] ?? 0);
+                if ($gorevNo > 0) {
+                    $workOrder = DB::table('tbGorevler')->where('No', $gorevNo)->first();
+                    app(\App\Services\WorkOrderEventLogger::class)->log([
+                        'event_type' => 'work_order_created_bulk',
+                        'aggregate_type' => 'work_order',
+                        'aggregate_id' => $gorevNo,
+                        'work_order_no' => $gorevNo,
+                        'order_item_no' => intval($workOrder->SiparisSatirNo ?? 0) > 0 ? intval($workOrder->SiparisSatirNo) : null,
+                        'order_no' => (string) ($workOrder->SiparisNo ?? ''),
+                        'status_after' => 'IsEmriVerildi',
+                        'source_screen' => 'Excel Toplu Is Emri',
+                        'source_action' => 'Excelden Toplu Is Emri Ver',
+                        'next_step_human' => 'Havuz ve personel gorevleri takip edilmeli.',
+                        'payload_after' => $this->serializeRecord($workOrder),
+                        'context' => [
+                            'urun_adi' => $urunAdi,
+                            'adet' => $adet,
+                            'matched_db_id' => $matchedId,
+                            'match_type' => $matchType,
+                        ],
+                    ]);
+                }
+
                 $created++;
             } catch (\Exception $ex) {
                 $failed++;
@@ -123,5 +147,18 @@ class TopluIsEmriApiController extends Controller
             'columnCount' => count($columns),
             'columns' => $columns,
         ]);
+    }
+
+    private function serializeRecord(object|array|null $record): ?array
+    {
+        if ($record === null) {
+            return null;
+        }
+
+        if (is_array($record)) {
+            return $record;
+        }
+
+        return json_decode(json_encode($record, JSON_UNESCAPED_UNICODE), true);
     }
 }

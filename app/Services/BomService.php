@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * BOM (Bill of Materials) Engine — AnaSayfa.aspx.cs + SiparisApi.ashx'den birebir çeviri.
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\DB;
  */
 class BomService
 {
+    private ?bool $supportsProductionOrderTraceCache = null;
+
     public function resolveLegacyProductNo(int|string $urunIDNo): int
     {
         if (is_int($urunIDNo)) {
@@ -39,6 +42,91 @@ class BomService
         $match = DB::table('tbUrunler')->where('UrunID', $raw)->value('No');
 
         return $match !== null ? intval($match) : 502;
+    }
+
+    public function supportsProductionOrderTrace(): bool
+    {
+        if ($this->supportsProductionOrderTraceCache === null) {
+            $this->supportsProductionOrderTraceCache =
+                Schema::hasColumn('tbBolumHavuz', 'SiparisSatirNo') &&
+                Schema::hasColumn('tbBolumHavuz', 'SiparisNo') &&
+                Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo') &&
+                Schema::hasColumn('tbPersonelGorev', 'SiparisNo') &&
+                Schema::hasColumn('tbGorevler', 'SiparisSatirNo') &&
+                Schema::hasColumn('tbGorevler', 'SiparisNo');
+        }
+
+        return $this->supportsProductionOrderTraceCache;
+    }
+
+    public function normalizeTraceContext(array $traceContext = []): array
+    {
+        return [
+            'siparisSatirNo' => max(0, intval($traceContext['siparisSatirNo'] ?? $traceContext['SiparisSatirNo'] ?? 0)),
+            'siparisNo' => trim((string) ($traceContext['siparisNo'] ?? $traceContext['SiparisNo'] ?? '')),
+        ];
+    }
+
+    public function traceContextFromRecord(object|array|null $record): array
+    {
+        if ($record === null) {
+            return $this->normalizeTraceContext();
+        }
+
+        if (is_array($record)) {
+            return $this->normalizeTraceContext($record);
+        }
+
+        return $this->normalizeTraceContext([
+            'SiparisSatirNo' => $record->SiparisSatirNo ?? 0,
+            'SiparisNo' => $record->SiparisNo ?? '',
+        ]);
+    }
+
+    public function buildTracePayload(array $traceContext = []): array
+    {
+        if (!$this->supportsProductionOrderTrace()) {
+            return [];
+        }
+
+        $trace = $this->normalizeTraceContext($traceContext);
+
+        if ($trace['siparisSatirNo'] <= 0 && $trace['siparisNo'] === '') {
+            return [];
+        }
+
+        return [
+            'SiparisSatirNo' => $trace['siparisSatirNo'] > 0 ? $trace['siparisSatirNo'] : null,
+            'SiparisNo' => $trace['siparisNo'] !== '' ? $trace['siparisNo'] : null,
+        ];
+    }
+
+    public function scopeQueryToTrace($query, array $traceContext = [], bool $matchUntraced = false, ?string $tableAlias = null)
+    {
+        if (!$this->supportsProductionOrderTrace()) {
+            return $query;
+        }
+
+        $trace = $this->normalizeTraceContext($traceContext);
+        $siparisSatirNoColumn = $tableAlias ? $tableAlias . '.SiparisSatirNo' : 'SiparisSatirNo';
+        $siparisNoColumn = $tableAlias ? $tableAlias . '.SiparisNo' : 'SiparisNo';
+
+        if ($trace['siparisSatirNo'] > 0) {
+            return $query->where($siparisSatirNoColumn, $trace['siparisSatirNo']);
+        }
+
+        if ($trace['siparisNo'] !== '') {
+            return $query->where($siparisNoColumn, $trace['siparisNo']);
+        }
+
+        if ($matchUntraced) {
+            return $query->where(function ($subQuery) use ($siparisSatirNoColumn) {
+                $subQuery->whereNull($siparisSatirNoColumn)
+                    ->orWhere($siparisSatirNoColumn, 0);
+            });
+        }
+
+        return $query;
     }
 
     /**
@@ -237,11 +325,13 @@ class BomService
     public function minAraUrunUretimiDenetle(
         int|string $urunIDNo, string $yol, string $refUrunAdiNo,
         int $uretimAdet, string $aciklama, string $stokDurum,
-        array &$tamponDusumleri = []
+        array &$tamponDusumleri = [],
+        array $traceContext = []
     ): int {
         try {
             $araUrunNo = intval($refUrunAdiNo);
             $legacyUrunIDNo = $this->resolveLegacyProductNo($urunIDNo);
+            $normalizedTraceContext = $this->normalizeTraceContext($traceContext);
             $uretilebilir = $this->adetBelirle($refUrunAdiNo);
             $uretimAdet = $this->uretimAdetBelirle($refUrunAdiNo, $yol, $uretimAdet);
 
@@ -261,6 +351,7 @@ class BomService
             $legacyTime = now()->format('H:i');
             $legacyAciklama = trim($aciklama);
             $existingQuery = DB::table('tbBolumHavuz')->where('AraUrunAdiNo', $araUrunNo);
+            $this->scopeQueryToTrace($existingQuery, $normalizedTraceContext, true);
             $rawUrunIDNo = trim((string) $urunIDNo);
 
             if ($rawUrunIDNo !== '' && !ctype_digit($rawUrunIDNo)) {
@@ -286,7 +377,7 @@ class BomService
 
                 DB::table('tbBolumHavuz')->where('No', $existing->No)->update($updatePayload);
             } else {
-                DB::table('tbBolumHavuz')->insert([
+                DB::table('tbBolumHavuz')->insert(array_merge([
                     'UrunIDNo' => $legacyUrunIDNo,
                     'AraUrunAdiNo' => $araUrunNo,
                     'ToplamAdet' => $uretimAdet,
@@ -295,7 +386,7 @@ class BomService
                     'Aciklama' => $legacyAciklama !== '' ? $legacyAciklama : null,
                     'GorevBaslangicTarihi' => $legacyDate,
                     'GorevBaslangicSaati' => $legacyTime,
-                ]);
+                ], $this->buildTracePayload($normalizedTraceContext)));
             }
             return $uretimAdet;
         } catch (\Exception $e) {
@@ -309,7 +400,8 @@ class BomService
     public function isEmriVerRecursive(
         string $refUrunAdiNo, int $uretimAdet, string $aciklama,
         string $yol, int|string $urunIDNo, string $stokDurum,
-        array &$tamponDusumleri = []
+        array &$tamponDusumleri = [],
+        array $traceContext = []
     ): void {
         $subComponents = $this->birAdimOncesiUrunAdlari($refUrunAdiNo);
         if (empty($subComponents)) return;
@@ -318,10 +410,26 @@ class BomService
             if (empty($sub)) continue;
             $subSubs = $this->birAdimOncesiUrunAdlari($sub);
             $result = $this->minAraUrunUretimiDenetle(
-                $urunIDNo, $yol, $sub, $uretimAdet, $aciklama, $stokDurum, $tamponDusumleri
+                $urunIDNo,
+                $yol,
+                $sub,
+                $uretimAdet,
+                $aciklama,
+                $stokDurum,
+                $tamponDusumleri,
+                $traceContext
             );
             if ($result > 0 && trim($subSubs) !== '') {
-                $this->isEmriVerRecursive($sub, $result, $aciklama, $yol, $urunIDNo, $stokDurum, $tamponDusumleri);
+                $this->isEmriVerRecursive(
+                    $sub,
+                    $result,
+                    $aciklama,
+                    $yol,
+                    $urunIDNo,
+                    $stokDurum,
+                    $tamponDusumleri,
+                    $traceContext
+                );
             }
         }
     }
@@ -536,6 +644,31 @@ class BomService
                         'TamponMiktar' => $kayit->Adet
                     ]);
                 }
+            }
+        }
+    }
+
+    // ================================================================
+    // tamponStokKontrol
+    // Havuz kaydı silindiğinde, alt parçaların TamponMiktarını
+    // geri artırır (ASP.NET AdminAnaSayfa.cs tamponStokKontrol)
+    // ================================================================
+    public function tamponStokKontrol(string $araUrunAdiNo, int $adet): void
+    {
+        $altParcalar = $this->birAdimOncesiUrunAdlari($araUrunAdiNo);
+        if (trim($altParcalar) === '') return;
+
+        $parcalar = explode(':', $altParcalar);
+        foreach ($parcalar as $parcaNo) {
+            $parcaNo = trim($parcaNo);
+            if ($parcaNo === '') continue;
+
+            $carpan = $this->kacParca($araUrunAdiNo, $parcaNo);
+            $artis = $adet * $carpan;
+            if ($artis > 0) {
+                DB::table('tbBolumAraStok')
+                    ->where('AraUrunAdiNo', intval($parcaNo))
+                    ->update(['TamponMiktar' => DB::raw("TamponMiktar + {$artis}")]);
             }
         }
     }

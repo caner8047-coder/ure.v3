@@ -4,7 +4,7 @@
 
 @section('page-actions')
     <a href="{{ route('workorders.create') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clipboard-plus me-1"></i>Tekli Emir</a>
-    <a href="{{ route('workorders.history') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clock-history me-1"></i>Gecmis</a>
+    <a href="{{ route('workorders.center') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clock-history me-1"></i>Merkez</a>
     <button type="button" class="btn btn-primary btn-sm" onclick="loadSummary()"><i class="bi bi-arrow-repeat me-1"></i>Yenile</button>
 @endsection
 

@@ -12,13 +12,15 @@ use Exception;
 use App\Services\OrderSyncService;
 use App\Services\BomService;
 use App\Services\WorkOrderService;
+use App\Services\WorkOrderEventLogger;
 
 class SiparisApiController extends Controller
 {
     public function __construct(
         protected \App\Services\OrderSyncService $orderSync,
         protected \App\Services\OrderToWorkOrderService $orderToWorkOrder,
-        protected WorkOrderService $workOrderService
+        protected WorkOrderService $workOrderService,
+        protected WorkOrderEventLogger $workOrderEventLogger
     ) {}
 
     /**
@@ -60,6 +62,10 @@ class SiparisApiController extends Controller
                     return $this->getAraUrunler($request);
                 case 'getUrunler':
                     return $this->getUrunler($request);
+                case 'getProductBomComponents':
+                    return $this->getProductBomComponents($request);
+                case 'createIndependentStockOrder':
+                    return $this->createIndependentStockOrder($request);
                 case 'importPersoneller':
                     return $this->importPersoneller($request);
                 case 'importBolumler':
@@ -355,17 +361,50 @@ class SiparisApiController extends Controller
 
             // ─── Üretimde adet bilgisi ekle (ASP.NET birebir) ───
             // Havuz (atanmamış) + PersonelGorev (atanmış devam eden)
-            $havuzMap = DB::table('tbBolumHavuz')
-                ->select('AraUrunAdiNo', DB::raw('SUM(IFNULL(ToplamAdet,0)) as Toplam'))
-                ->groupBy('AraUrunAdiNo')->pluck('Toplam', 'AraUrunAdiNo');
-            $pGorevMap = DB::table('tbPersonelGorev')
-                ->select('AraUrunAdiNo', DB::raw('SUM(IFNULL(Adet,0) + IFNULL(BekleyenAdet,0)) as Toplam'))
-                ->groupBy('AraUrunAdiNo')->pluck('Toplam', 'AraUrunAdiNo');
+            $havuzMap = DB::table('tbBolumHavuz as h')
+                ->leftJoin('tbSiparisSatir as s', 'h.SiparisSatirNo', '=', 's.No')
+                ->select(
+                    'h.AraUrunAdiNo',
+                    DB::raw('SUM(IFNULL(h.Adet,0)) as Toplam'),
+                    DB::raw("SUM(CASE WHEN (s.Musteri LIKE 'ÖZEL ÜRETİM%' OR IFNULL(h.SiparisSatirNo, 0) = 0) THEN IFNULL(h.Adet,0) ELSE 0 END) as ToplamOzel")
+                )
+                ->groupBy('h.AraUrunAdiNo')
+                ->get()
+                ->keyBy('AraUrunAdiNo');
+
+            $pendingApprovalSql = $this->pendingApprovalSql('h.Onay');
+            $pGorevMap = DB::table('tbPersonelGorev as h')
+                ->leftJoin('tbSiparisSatir as s', 'h.SiparisSatirNo', '=', 's.No')
+                ->select(
+                    'h.AraUrunAdiNo',
+                    DB::raw("SUM(
+                        CASE
+                            WHEN IFNULL(h.BekleyenAdet, 0) > 0 THEN IFNULL(h.BekleyenAdet, 0)
+                            WHEN {$pendingApprovalSql} THEN IFNULL(h.Adet, 0)
+                            ELSE 0
+                        END
+                    ) as Toplam"),
+                    DB::raw("SUM(
+                        CASE WHEN (s.Musteri LIKE 'ÖZEL ÜRETİM%' OR IFNULL(h.SiparisSatirNo, 0) = 0) THEN
+                            CASE
+                                WHEN IFNULL(h.BekleyenAdet, 0) > 0 THEN IFNULL(h.BekleyenAdet, 0)
+                                WHEN {$pendingApprovalSql} THEN IFNULL(h.Adet, 0)
+                                ELSE 0
+                            END
+                        ELSE 0 END
+                    ) as ToplamOzel")
+                )
+                ->groupBy('h.AraUrunAdiNo')
+                ->get()
+                ->keyBy('AraUrunAdiNo');
 
             foreach ($orders as &$ord) {
                 $esNo = $ord['eslesenUrunNo'];
                 $esTur = $ord['eslesenUrunTur'];
                 $ord['uretimdeAdet'] = 0;
+                $ord['uretimdeOzel'] = 0;
+                $ord['havuzAdet'] = 0;
+                $ord['personelAdet'] = 0;
 
                 if ($esNo > 0) {
                     $araUrunNoUretim = 0;
@@ -378,7 +417,13 @@ class SiparisApiController extends Controller
                         $araUrunNoUretim = $esNo;
                     }
                     if ($araUrunNoUretim > 0) {
-                        $ord['uretimdeAdet'] = (int)(($havuzMap[$araUrunNoUretim] ?? 0) + ($pGorevMap[$araUrunNoUretim] ?? 0));
+                        $havuzInfo = $havuzMap[$araUrunNoUretim] ?? null;
+                        $pGorevInfo = $pGorevMap[$araUrunNoUretim] ?? null;
+
+                        $ord['havuzAdet'] = (int)($havuzInfo->Toplam ?? 0);
+                        $ord['personelAdet'] = (int)($pGorevInfo->Toplam ?? 0);
+                        $ord['uretimdeAdet'] = $ord['havuzAdet'] + $ord['personelAdet'];
+                        $ord['uretimdeOzel'] = (int)(($havuzInfo->ToplamOzel ?? 0) + ($pGorevInfo->ToplamOzel ?? 0));
                     }
                 }
             }
@@ -431,11 +476,11 @@ class SiparisApiController extends Controller
     {
         try {
             $itemsQuery = DB::select("
-                SELECT c.No as no, c.ExcelUrunAdi as excelUrunAdi, c.EslesenUrunNo as eslesenUrunNo, 
-                       c.EslesenUrunTur as eslesenUrunTur, c.OlusturmaTarihi as olusturmaTarihi, 
+                SELECT c.No as no, c.ExcelUrunAdi as excelUrunAdi, c.EslesenUrunNo as eslesenUrunNo,
+                       c.EslesenUrunTur as eslesenUrunTur, c.OlusturmaTarihi as olusturmaTarihi,
                        IFNULL(u.SistemAdi, u.UrunID) AS sistemUrunAdi
-                FROM tbUrunEslestirmeOnbellek c 
-                LEFT JOIN tbUrunler u ON c.EslesenUrunNo = u.No 
+                FROM tbUrunEslestirmeOnbellek c
+                LEFT JOIN tbUrunler u ON c.EslesenUrunNo = u.No
                 ORDER BY c.OlusturmaTarihi DESC
             ");
 
@@ -493,7 +538,7 @@ class SiparisApiController extends Controller
 
             $processDeletion = function ($no) use (&$deleted, &$clearedOrders) {
                 $excelAdi = DB::table('tbUrunEslestirmeOnbellek')->where('No', $no)->value('ExcelUrunAdi');
-                
+
                 if ($excelAdi) {
                     $clearedOrders += DB::table('tbSiparisSatir')
                         ->where('UrunAdi', $excelAdi)
@@ -533,9 +578,9 @@ class SiparisApiController extends Controller
     {
         try {
             $setsQuery = DB::select("
-                SELECT No as no, ExcelSetAdi as excelSetAdi, IFNULL(SetAdi,'') AS setAdi, 
-                       OlusturmaTarihi as olusturmaTarihi, Aktif as aktif 
-                FROM tbSetTanimlari 
+                SELECT No as no, ExcelSetAdi as excelSetAdi, IFNULL(SetAdi,'') AS setAdi,
+                       OlusturmaTarihi as olusturmaTarihi, Aktif as aktif
+                FROM tbSetTanimlari
                 ORDER BY OlusturmaTarihi DESC
             ");
 
@@ -546,11 +591,11 @@ class SiparisApiController extends Controller
                 $set->aktif = (bool)$set->aktif;
 
                 $iceriklerQuery = DB::select("
-                    SELECT i.No as no, i.UrunNo as urunNo, i.Adet as adet, 
+                    SELECT i.No as no, i.UrunNo as urunNo, i.Adet as adet,
                            IFNULL(u.SistemAdi, u.UrunID) AS urunAdi
-                    FROM tbSetIcerikleri i 
-                    LEFT JOIN tbUrunler u ON i.UrunNo = u.No 
-                    WHERE i.SetNo = ? 
+                    FROM tbSetIcerikleri i
+                    LEFT JOIN tbUrunler u ON i.UrunNo = u.No
+                    WHERE i.SetNo = ?
                     ORDER BY i.No
                 ", [$set->no]);
 
@@ -626,7 +671,7 @@ class SiparisApiController extends Controller
     {
         try {
             $no = intval($request->json('no'));
-            
+
             DB::transaction(function () use ($no) {
                 DB::table('tbSetIcerikleri')->where('SetNo', $no)->delete();
                 DB::table('tbSetTanimlari')->where('No', $no)->delete();
@@ -669,13 +714,7 @@ class SiparisApiController extends Controller
             // Tampon stoğu geri yükle
             $this->restoreTamponFromJson($tamponJson);
 
-            // tbBolumHavuz'dan görevleri sil
-            $deleted = 0;
-            if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
-                $deleted = DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->delete();
-            } elseif ($gorevNo > 0) {
-                $deleted = DB::table('tbBolumHavuz')->where('No', $gorevNo)->delete();
-            }
+            $deleted = $this->deleteProductionRowsForOrder($satir);
 
             // Log kaydi
             $this->logIsEmriGecmisi($satirNo, $gorevNo, $eslesenUrunNo, $eslesenUrunTur, 'IptalEdildi');
@@ -688,6 +727,27 @@ class SiparisApiController extends Controller
                 'Durum' => $yeniDurum, 'Aktif' => $yeniAktif,
                 'GorevNo' => null, 'IsEmriTarihi' => null,
                 'TamponDusumleri' => null, 'GuncellemeTarihi' => now()
+            ]);
+
+            $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+            $this->logCenterEvent([
+                'event_type' => 'work_order_cancelled',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => $satirNo,
+                'order_item_no' => $satirNo,
+                'order_no' => (string) ($updatedSatir->SiparisNo ?? $satir->SiparisNo ?? ''),
+                'work_order_no' => $gorevNo > 0 ? $gorevNo : null,
+                'status_before' => $durum,
+                'status_after' => $updatedSatir->Durum ?? $yeniDurum,
+                'next_step_human' => $isOzelUretim
+                    ? 'Kayit pasife alindi; gerekirse tekrar aktive edilmeli.'
+                    : 'Siparis tekrar is emri verilmeyi bekliyor.',
+                'payload_before' => $this->serializeRecord($satir),
+                'payload_after' => $this->serializeRecord($updatedSatir),
+                'context' => [
+                    'deleted_production_rows' => $deleted,
+                    'is_special_production' => $isOzelUretim,
+                ],
             ]);
 
             return response()->json(['success' => true, 'deleted' => $deleted, 'message' => "İş emri iptal edildi. {$deleted} görev silindi."]);
@@ -720,16 +780,10 @@ class SiparisApiController extends Controller
 
                     $this->restoreTamponFromJson($satir->TamponDusumleri ?? '');
 
-                    $deleted = 0;
                     $eslesenUrunTur = $satir->EslesenUrunTur ?? '';
                     $eslesenUrunNo = intval($satir->EslesenUrunNo ?? 0);
                     $gorevNo = intval($satir->GorevNo ?? 0);
-
-                    if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
-                        $deleted = DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->delete();
-                    } elseif ($gorevNo > 0) {
-                        $deleted = DB::table('tbBolumHavuz')->where('No', $gorevNo)->delete();
-                    }
+                    $deleted = $this->deleteProductionRowsForOrder($satir);
 
                     $this->logIsEmriGecmisi($satirNo, $gorevNo, $eslesenUrunNo, $eslesenUrunTur, 'IptalEdildi');
 
@@ -741,6 +795,29 @@ class SiparisApiController extends Controller
                         'Durum' => $yeniDurum, 'Aktif' => $yeniAktif,
                         'GorevNo' => null, 'IsEmriTarihi' => null,
                         'TamponDusumleri' => null, 'GuncellemeTarihi' => now()
+                    ]);
+
+                    $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+                    $this->logCenterEvent([
+                        'event_type' => 'work_order_cancelled',
+                        'aggregate_type' => 'order_item',
+                        'aggregate_id' => intval($satirNo),
+                        'order_item_no' => intval($satirNo),
+                        'order_no' => (string) ($updatedSatir->SiparisNo ?? $satir->SiparisNo ?? ''),
+                        'work_order_no' => $gorevNo > 0 ? $gorevNo : null,
+                        'status_before' => $durum,
+                        'status_after' => $updatedSatir->Durum ?? $yeniDurum,
+                        'title_human' => 'Toplu is emri iptal edildi',
+                        'next_step_human' => $isOzelUretim
+                            ? 'Kayit pasife alindi; gerekirse tekrar aktive edilmeli.'
+                            : 'Siparis tekrar is emri verilmeyi bekliyor.',
+                        'payload_before' => $this->serializeRecord($satir),
+                        'payload_after' => $this->serializeRecord($updatedSatir),
+                        'context' => [
+                            'deleted_production_rows' => $deleted,
+                            'bulk' => true,
+                            'is_special_production' => $isOzelUretim,
+                        ],
                     ]);
                     $toplamIptal++; $toplamSilinen += $deleted;
                 } catch (\Exception $ex) {
@@ -774,22 +851,35 @@ class SiparisApiController extends Controller
 
                     $this->restoreTamponFromJson($satir->TamponDusumleri ?? '');
 
-                    $deleted = 0;
                     $eslesenUrunTur = $satir->EslesenUrunTur ?? '';
                     $eslesenUrunNo = intval($satir->EslesenUrunNo ?? 0);
                     $gorevNo = intval($satir->GorevNo ?? 0);
-
-                    if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
-                        $deleted = DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->delete();
-                    } elseif ($gorevNo > 0) {
-                        $deleted = DB::table('tbBolumHavuz')->where('No', $gorevNo)->delete();
-                    }
+                    $deleted = $this->deleteProductionRowsForOrder($satir);
 
                     $this->logIsEmriGecmisi($satirNo, $gorevNo, $eslesenUrunNo, $eslesenUrunTur, 'IptalEdildi');
 
                     DB::table('tbSiparisSatir')->where('No', $satirNo)->update([
                         'Durum' => 'Pasif', 'Aktif' => 0, 'GorevNo' => null, 'IsEmriTarihi' => null,
                         'TamponDusumleri' => null, 'GuncellemeTarihi' => now()
+                    ]);
+
+                    $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+                    $this->logCenterEvent([
+                        'event_type' => 'order_passivated',
+                        'aggregate_type' => 'order_item',
+                        'aggregate_id' => intval($satirNo),
+                        'order_item_no' => intval($satirNo),
+                        'order_no' => (string) ($updatedSatir->SiparisNo ?? $satir->SiparisNo ?? ''),
+                        'work_order_no' => $gorevNo > 0 ? $gorevNo : null,
+                        'status_before' => $satir->Durum ?? null,
+                        'status_after' => $updatedSatir->Durum ?? 'Pasif',
+                        'next_step_human' => 'Kayit pasif durumda. Gerekirse yeniden aktive edilmeden islem yapilamaz.',
+                        'payload_before' => $this->serializeRecord($satir),
+                        'payload_after' => $this->serializeRecord($updatedSatir),
+                        'context' => [
+                            'deleted_production_rows' => $deleted,
+                            'bulk' => true,
+                        ],
                     ]);
                     $cancelled++; $deletedTotal += $deleted;
                 } catch (\Exception $ex) { /* skip */ }
@@ -866,7 +956,7 @@ class SiparisApiController extends Controller
                 $no = intval($row->EslesenUrunNo ?? 0);
                 $row->sistemAdi = '';
                 $row->UretilebilirAdet = 0;
-                
+
                 if ($no > 0) {
                     $urun = DB::table('tbUrunler')->where('No', $no)->first();
                     if ($urun) $row->sistemAdi = $urun->SistemAdi ?: $urun->UrunID;
@@ -874,7 +964,7 @@ class SiparisApiController extends Controller
                         $ara = DB::table('tbAraUrun')->where('No', $no)->first();
                         if ($ara) $row->sistemAdi = $ara->AraUrunAdi;
                     }
-                    
+
                     // Üretim Planlama hesabı
                     $row->UretilebilirAdet = $bomService->uretilebilirNihaiAdet($no, $row->EslesenUrunTur ?? 'Nihayi Ürün');
                 }
@@ -935,13 +1025,20 @@ class SiparisApiController extends Controller
 
     private function getAraUrunler(Request $request)
     {
-        $data = DB::table('tbAraUrun as a')
+        $query = DB::table('tbAraUrun as a')
             ->leftJoin('tbBolum as b', 'a.BolumAdiNo', '=', 'b.No')
             ->leftJoin('tbUrunler as u', 'a.AraUrunAdi', '=', 'u.UrunID')
             ->select('a.No', 'a.AraUrunAdi', 'a.Performans', 'a.BolumAdiNo', 'a.MinAdet', 'a.UrunCesidi', 'a.Yol',
                 'u.SistemKodu', 'u.UrunID',
-                DB::raw("IFNULL(b.BolumAdi,'') as BolumAdi"))
-            ->orderBy('a.AraUrunAdi')->get();
+                DB::raw("IFNULL(b.BolumAdi,'') as BolumAdi"));
+
+        $search = $request->query('search');
+        if (!empty($search)) {
+            $query->where('a.AraUrunAdi', 'like', '%' . $search . '%');
+            $query->limit(100); // Select2 gibi arama kutuları için limiti devreye sok
+        }
+
+        $data = $query->orderBy('a.AraUrunAdi')->get();
         return response()->json(['success' => true, 'data' => $data, 'count' => $data->count()]);
     }
 
@@ -1250,15 +1347,21 @@ class SiparisApiController extends Controller
             $eslesenUrunTur = $data['eslesenUrunTur'] ?? '';
             $istenenAdet = intval($data['adet'] ?? 0);
 
+            if ($eslesenUrunNo <= 0 || trim($eslesenUrunTur) === '' || $istenenAdet <= 0) {
+                throw new \Exception('GİED için ürün ve adet bilgisi zorunludur.');
+            }
+
             $results = DB::select("
                 SELECT sp.No, sp.SiparisNo, sp.UrunAdi, sp.Adet AS ToplamAdet,
-                    IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum != 'Pasif'), 0) AS RezerveAdet,
+                    IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum NOT IN ('Pasif', 'StokKarsilandi')), 0) AS RezerveAdet,
                     sp.Durum, sp.IsEmriTarihi, sp.GorevNo
                 FROM tbSiparisSatir sp
                 WHERE sp.Aktif = 1 AND sp.Musteri LIKE 'ÖZEL ÜRETİM%'
-                    AND sp.EslesenUrunNo = ? AND sp.EslesenUrunTur = ? AND sp.Durum != 'Pasif'
-                    AND (sp.Adet - IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum != 'Pasif'), 0)) >= ?
-                ORDER BY sp.IsEmriTarihi ASC
+                    AND sp.EslesenUrunNo = ? AND sp.EslesenUrunTur = ?
+                    AND sp.Durum NOT IN ('Pasif', 'StokKarsilandi')
+                    AND (IFNULL(sp.GorevNo, 0) > 0 OR sp.Durum IN ('IsEmriVerildi', 'PasifDevamEden', 'UretimdenKarsilaniyor'))
+                    AND (sp.Adet - IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum NOT IN ('Pasif', 'StokKarsilandi')), 0)) >= ?
+                ORDER BY COALESCE(sp.IsEmriTarihi, sp.GuncellemeTarihi, sp.YuklemeTarihi) ASC, sp.No ASC
             ", [$eslesenUrunNo, $eslesenUrunTur, $istenenAdet]);
 
             $data = collect($results)->map(function ($row) {
@@ -1283,25 +1386,85 @@ class SiparisApiController extends Controller
             $siparisNo = intval($data['siparisNo'] ?? 0);
             $ozelUretimNo = intval($data['ozelUretimNo'] ?? 0);
 
-            DB::transaction(function () use ($siparisNo, $ozelUretimNo) {
-                $order = DB::table('tbSiparisSatir')->where('No', $siparisNo)->where('Aktif', 1)->first();
+            $eventPayload = DB::transaction(function () use ($siparisNo, $ozelUretimNo) {
+                $order = DB::table('tbSiparisSatir')
+                    ->where('No', $siparisNo)
+                    ->where('Aktif', 1)
+                    ->lockForUpdate()
+                    ->first();
                 if (!$order) throw new \Exception('Sipariş bulunamadı veya pasif.');
                 if (!empty($order->BagliOlduguOzelUretimNo)) throw new \Exception('Bu sipariş zaten bir üretim rezervasyonuna bağlanmış!');
-                if (($order->Durum ?? '') === 'Pasif') throw new \Exception('Pasif bir sipariş rezerve edilemez.');
+                if (($order->Durum ?? '') !== 'UretimBekliyor') throw new \Exception('Sadece üretim bekleyen siparişler GİED ile bağlanabilir.');
 
-                $bosta = DB::selectOne("
-                    SELECT Adet - IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum != 'Pasif'), 0) AS BostakiAdet
-                    FROM tbSiparisSatir sp WHERE sp.No = ? AND sp.Aktif = 1
-                ", [$ozelUretimNo]);
+                $specialProduction = DB::table('tbSiparisSatir')
+                    ->where('No', $ozelUretimNo)
+                    ->where('Aktif', 1)
+                    ->where('Musteri', 'like', 'ÖZEL ÜRETİM%')
+                    ->lockForUpdate()
+                    ->first();
 
-                if (!$bosta) throw new \Exception('Özel üretim kaydı bulunamadı.');
-                if (intval($bosta->BostakiAdet) < intval($order->Adet))
-                    throw new \Exception("Özel üretimin boşta kalan kapasitesi yetersiz! (Boşta: {$bosta->BostakiAdet}, İstenen: {$order->Adet})");
+                if (!$specialProduction) throw new \Exception('Özel üretim kaydı bulunamadı.');
+                if (intval($specialProduction->EslesenUrunNo ?? 0) !== intval($order->EslesenUrunNo ?? 0)
+                    || (string) ($specialProduction->EslesenUrunTur ?? '') !== (string) ($order->EslesenUrunTur ?? '')
+                ) {
+                    throw new \Exception('Seçilen özel üretim sipariş ile aynı ürüne ait değil.');
+                }
+
+                $specialStatus = (string) ($specialProduction->Durum ?? '');
+                if (in_array($specialStatus, ['Pasif', 'StokKarsilandi'], true)) {
+                    throw new \Exception('Bu özel üretim artık rezervasyona uygun değil.');
+                }
+
+                if (intval($specialProduction->GorevNo ?? 0) <= 0
+                    && !in_array($specialStatus, ['IsEmriVerildi', 'PasifDevamEden', 'UretimdenKarsilaniyor'], true)
+                ) {
+                    throw new \Exception('Henüz üretim bandına alınmamış özel üretime rezervasyon bağlanamaz.');
+                }
+
+                $rezerveAdet = intval(
+                    DB::table('tbSiparisSatir')
+                        ->where('BagliOlduguOzelUretimNo', $ozelUretimNo)
+                        ->where('Aktif', 1)
+                        ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
+                        ->sum('Adet')
+                );
+                $bostaAdet = intval($specialProduction->Adet ?? 0) - $rezerveAdet;
+                if ($bostaAdet < intval($order->Adet)) {
+                    throw new \Exception("Özel üretimin boşta kalan kapasitesi yetersiz! (Boşta: {$bostaAdet}, İstenen: {$order->Adet})");
+                }
 
                 DB::table('tbSiparisSatir')->where('No', $siparisNo)->update([
-                    'BagliOlduguOzelUretimNo' => $ozelUretimNo, 'Durum' => 'UretimdenKarsilaniyor'
+                    'BagliOlduguOzelUretimNo' => $ozelUretimNo,
+                    'Durum' => 'UretimdenKarsilaniyor',
+                    'GuncellemeTarihi' => now(),
                 ]);
+
+                return [
+                    'before' => $order,
+                    'after' => DB::table('tbSiparisSatir')->where('No', $siparisNo)->first(),
+                    'special_production_no' => $ozelUretimNo,
+                ];
             });
+
+            $this->logCenterEvent([
+                'event_type' => 'wip_linked',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => $siparisNo,
+                'order_item_no' => $siparisNo,
+                'order_no' => (string) (($eventPayload['after']->SiparisNo ?? '') ?: ($eventPayload['before']->SiparisNo ?? '')),
+                'work_order_no' => intval($eventPayload['after']->GorevNo ?? $eventPayload['before']->GorevNo ?? 0) > 0
+                    ? intval($eventPayload['after']->GorevNo ?? $eventPayload['before']->GorevNo ?? 0)
+                    : null,
+                'special_production_no' => $ozelUretimNo,
+                'status_before' => $eventPayload['before']->Durum ?? null,
+                'status_after' => $eventPayload['after']->Durum ?? null,
+                'next_step_human' => 'Bagli ozel uretimin tamamlanmasi bekleniyor.',
+                'payload_before' => $this->serializeRecord($eventPayload['before']),
+                'payload_after' => $this->serializeRecord($eventPayload['after']),
+                'context' => [
+                    'special_production_no' => $ozelUretimNo,
+                ],
+            ]);
 
             return response()->json(['success' => true, 'message' => 'Sipariş özel üretime bağlandı!']);
         } catch (\Exception $e) {
@@ -1318,19 +1481,61 @@ class SiparisApiController extends Controller
             $data = $request->json()->all();
             $siparisNo = intval($data['siparisNo'] ?? 0);
 
-            $order = DB::table('tbSiparisSatir')->where('No', $siparisNo)->first();
-            if (!$order) throw new \Exception('Sipariş bulunamadı.');
+            $payload = DB::transaction(function () use ($siparisNo) {
+                $order = DB::table('tbSiparisSatir')
+                    ->where('No', $siparisNo)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$order) throw new \Exception('Sipariş bulunamadı.');
+                if (empty($order->BagliOlduguOzelUretimNo)) {
+                    throw new \Exception('Bu siparişin aktif bir GİED rezervasyonu yok.');
+                }
 
-            DB::table('tbSiparisSatir')->where('No', $siparisNo)->update([
-                'BagliOlduguOzelUretimNo' => null, 'Durum' => 'UretimBekliyor', 'GuncellemeTarihi' => now()
+                $currentStatus = (string) ($order->Durum ?? '');
+                $nextStatus = $currentStatus === 'StokKarsilandi' ? 'StokKarsilandi' : 'UretimBekliyor';
+
+                DB::table('tbSiparisSatir')->where('No', $siparisNo)->update([
+                    'BagliOlduguOzelUretimNo' => null,
+                    'Durum' => $nextStatus,
+                    'GuncellemeTarihi' => now(),
+                ]);
+
+                return [
+                    'before' => $order,
+                    'after' => DB::table('tbSiparisSatir')->where('No', $siparisNo)->first(),
+                    'message' => $nextStatus === 'StokKarsilandi'
+                        ? 'Rezervasyon temizlendi, sipariş stoktan karşılanmış durumda bırakıldı.'
+                        : 'Rezervasyon iptal edildi.',
+                ];
+            });
+
+            $this->logCenterEvent([
+                'event_type' => 'wip_unlinked',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => $siparisNo,
+                'order_item_no' => $siparisNo,
+                'order_no' => (string) (($payload['after']->SiparisNo ?? '') ?: ($payload['before']->SiparisNo ?? '')),
+                'work_order_no' => intval($payload['after']->GorevNo ?? $payload['before']->GorevNo ?? 0) > 0
+                    ? intval($payload['after']->GorevNo ?? $payload['before']->GorevNo ?? 0)
+                    : null,
+                'special_production_no' => intval($payload['before']->BagliOlduguOzelUretimNo ?? 0) > 0
+                    ? intval($payload['before']->BagliOlduguOzelUretimNo)
+                    : null,
+                'status_before' => $payload['before']->Durum ?? null,
+                'status_after' => $payload['after']->Durum ?? null,
+                'next_step_human' => ($payload['after']->Durum ?? '') === 'StokKarsilandi'
+                    ? 'Kayit stoktan kapanmis durumda kaldı.'
+                    : 'Siparis yeniden uretim bekliyor durumuna dondu.',
+                'payload_before' => $this->serializeRecord($payload['before']),
+                'payload_after' => $this->serializeRecord($payload['after']),
             ]);
 
-            return response()->json(['success' => true, 'message' => 'Rezervasyon iptal edildi.']);
+            return response()->json(['success' => true, 'message' => $payload['message']]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()]);
         }
     }
-    
+
     // ===============================================
     // KRİTİK STOK EŞİĞİ YÖNETİMİ
     // ===============================================
@@ -1339,18 +1544,18 @@ class SiparisApiController extends Controller
         try {
             // Thresholds
             $thresholdsQuery = DB::select("
-                SELECT 
-                    e.No as no, 
-                    e.AraUrunAdiNo as araUrunAdiNo, 
-                    e.EsikMiktar as esikMiktar, 
+                SELECT
+                    e.No as no,
+                    e.AraUrunAdiNo as araUrunAdiNo,
+                    e.EsikMiktar as esikMiktar,
                     e.OtomatikIsEmri as otomatikIsEmri,
-                    e.IsEmriAdet as isEmriAdet, 
-                    e.UrunIDNo as urunIDNo, 
+                    e.IsEmriAdet as isEmriAdet,
+                    e.UrunIDNo as urunIDNo,
                     e.Aktif as aktif,
-                    e.SonKontrolTarihi as sonKontrolTarihi, 
-                    e.SonUyariTarihi as sonUyariTarihi, 
+                    e.SonKontrolTarihi as sonKontrolTarihi,
+                    e.SonUyariTarihi as sonUyariTarihi,
                     e.OlusturmaTarihi as olusturmaTarihi,
-                    a.AraUrunAdi as araUrunAdi, 
+                    a.AraUrunAdi as araUrunAdi,
                     IFNULL(a.UrunCesidi,'') AS urunCesidi,
                     IFNULL((SELECT SUM(s.Adet) FROM tbBolumAraStok s WHERE s.AraUrunAdiNo = e.AraUrunAdiNo), 0) AS mevcutStok
                 FROM tbKritikStokEsik e
@@ -1362,7 +1567,7 @@ class SiparisApiController extends Controller
                 // Formatting dates and calculating statuses
                 $mevcutStok = intval($row->mevcutStok);
                 $esik = intval($row->esikMiktar);
-                
+
                 $row->durum = $mevcutStok <= 0 ? 'Kritik' : ($mevcutStok < $esik ? 'Uyari' : 'Normal');
                 $row->otomatikIsEmri = (bool)$row->otomatikIsEmri;
                 return $row;
@@ -1370,9 +1575,9 @@ class SiparisApiController extends Controller
 
             // Available Products (without thresholds)
             $availableQuery = DB::select("
-                SELECT 
-                    a.No as araUrunAdiNo, 
-                    a.AraUrunAdi as araUrunAdi, 
+                SELECT
+                    a.No as araUrunAdiNo,
+                    a.AraUrunAdi as araUrunAdi,
                     IFNULL(a.UrunCesidi,'') AS urunCesidi,
                     IFNULL((SELECT SUM(s.Adet) FROM tbBolumAraStok s WHERE s.AraUrunAdiNo = a.No), 0) AS mevcutStok
                 FROM tbAraUrun a
@@ -1395,7 +1600,7 @@ class SiparisApiController extends Controller
     private function saveThreshold(Request $request)
     {
         $payload = json_decode($request->getContent(), true);
-        
+
         $araUrunAdiNo = $payload['araUrunAdiNo'] ?? 0;
         $esikMiktar = $payload['esikMiktar'] ?? 5;
         $otomatikIsEmri = isset($payload['otomatikIsEmri']) && $payload['otomatikIsEmri'] ? 1 : 0;
@@ -1409,10 +1614,10 @@ class SiparisApiController extends Controller
             DB::statement("
                 INSERT INTO tbKritikStokEsik (AraUrunAdiNo, EsikMiktar, OtomatikIsEmri, IsEmriAdet, Aktif)
                 VALUES (?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE 
-                    EsikMiktar = VALUES(EsikMiktar), 
-                    OtomatikIsEmri = VALUES(OtomatikIsEmri), 
-                    IsEmriAdet = VALUES(IsEmriAdet), 
+                ON DUPLICATE KEY UPDATE
+                    EsikMiktar = VALUES(EsikMiktar),
+                    OtomatikIsEmri = VALUES(OtomatikIsEmri),
+                    IsEmriAdet = VALUES(IsEmriAdet),
                     Aktif = VALUES(Aktif)
             ", [$araUrunAdiNo, $esikMiktar, $otomatikIsEmri, $isEmriAdet, $aktif]);
 
@@ -1426,9 +1631,9 @@ class SiparisApiController extends Controller
     {
         $payload = json_decode($request->getContent(), true);
         $no = $payload['no'] ?? 0;
-        
+
         if ($no <= 0) return response()->json(['success' => false, 'message' => 'Geçersiz kayıt.']);
-        
+
         try {
             DB::table('tbKritikStokEsik')->where('No', $no)->delete();
             return response()->json(['success' => true, 'message' => 'Eşik tanımı silindi.']);
@@ -1442,20 +1647,20 @@ class SiparisApiController extends Controller
         try {
             // Alerts for active thresholds where current stock is lower than threshold
             $alertsQuery = DB::select("
-                SELECT 
-                    e.No as no, 
-                    e.AraUrunAdiNo as araUrunAdiNo, 
-                    e.EsikMiktar as esikMiktar, 
-                    e.OtomatikIsEmri as otomatikIsEmri, 
+                SELECT
+                    e.No as no,
+                    e.AraUrunAdiNo as araUrunAdiNo,
+                    e.EsikMiktar as esikMiktar,
+                    e.OtomatikIsEmri as otomatikIsEmri,
                     e.IsEmriAdet as isEmriAdet,
-                    a.AraUrunAdi as araUrunAdi, 
+                    a.AraUrunAdi as araUrunAdi,
                     IFNULL(a.UrunCesidi,'') AS urunCesidi,
                     IFNULL((SELECT SUM(s.Adet) FROM tbBolumAraStok s WHERE s.AraUrunAdiNo = e.AraUrunAdiNo), 0) AS mevcutStok
                 FROM tbKritikStokEsik e
                 JOIN tbAraUrun a ON a.No = e.AraUrunAdiNo
                 WHERE e.Aktif = 1
                 AND IFNULL((SELECT SUM(s.Adet) FROM tbBolumAraStok s WHERE s.AraUrunAdiNo = e.AraUrunAdiNo), 0) < e.EsikMiktar
-                ORDER BY 
+                ORDER BY
                     CASE WHEN IFNULL((SELECT SUM(s2.Adet) FROM tbBolumAraStok s2 WHERE s2.AraUrunAdiNo = e.AraUrunAdiNo), 0) <= 0 THEN 0 ELSE 1 END,
                     a.AraUrunAdi
             ");
@@ -1469,14 +1674,14 @@ class SiparisApiController extends Controller
 
             // Recent Logs
             $logsQuery = DB::select("
-                SELECT 
-                    u.No as no, 
-                    u.AraUrunAdiNo as araUrunAdiNo, 
-                    u.EsikMiktar as esikMiktar, 
+                SELECT
+                    u.No as no,
+                    u.AraUrunAdiNo as araUrunAdiNo,
+                    u.EsikMiktar as esikMiktar,
                     u.MevcutStok as mevcutStok,
-                    u.UyariTipi as uyariTipi, 
-                    u.OtomatikIsEmriVerildi as otomatikIsEmriVerildi, 
-                    u.Okundu as okundu, 
+                    u.UyariTipi as uyariTipi,
+                    u.OtomatikIsEmriVerildi as otomatikIsEmriVerildi,
+                    u.Okundu as okundu,
                     u.OlusturmaTarihi as tarih,
                     a.AraUrunAdi as araUrunAdi
                 FROM tbKritikStokUyari u
@@ -1519,8 +1724,10 @@ class SiparisApiController extends Controller
         }
         $satirlar = $payload['satirNolar'];
         $surplus = $payload['surplus'] ?? 0;
-        
-        $result = $this->orderToWorkOrder->createOrderWorkOrders($satirlar, $surplus);
+        $tur = $payload['tur'] ?? 'Nihai';
+        $altBilesenNo = $payload['altBilesenNo'] ?? null;
+
+        $result = $this->orderToWorkOrder->createOrderWorkOrders($satirlar, $surplus, $tur, $altBilesenNo);
         return response()->json($result);
     }
 
@@ -1557,6 +1764,28 @@ class SiparisApiController extends Controller
         $message = $gorevNo > 0
             ? "Is emri olusturuldu. Gorev No: {$gorevNo}"
             : 'Is emri olusturuldu.';
+
+        if ($gorevNo > 0) {
+            $workOrder = DB::table('tbGorevler')->where('No', $gorevNo)->first();
+            $this->logCenterEvent([
+                'event_type' => 'work_order_created_manual',
+                'aggregate_type' => 'work_order',
+                'aggregate_id' => $gorevNo,
+                'work_order_no' => $gorevNo,
+                'order_item_no' => intval($workOrder->SiparisSatirNo ?? 0) > 0 ? intval($workOrder->SiparisSatirNo) : null,
+                'order_no' => (string) ($workOrder->SiparisNo ?? ''),
+                'status_after' => 'IsEmriVerildi',
+                'next_step_human' => 'Havuz ve personel gorevleri takip edilmeli.',
+                'payload_after' => $this->serializeRecord($workOrder),
+                'context' => [
+                    'tur' => $tur,
+                    'urun_no' => $urunNo,
+                    'adet' => $adet,
+                    'stok_durum' => $stokDurum,
+                    'aciklama' => $aciklama,
+                ],
+            ]);
+        }
 
         return response()->json([
             'success' => true,
@@ -1625,15 +1854,12 @@ class SiparisApiController extends Controller
                 ->get();
 
             foreach ($kontrolListesi as $kayit) {
-                $aktifGorev = 0;
-
-                if ($kayit->EslesenUrunTur === 'Nihai' && intval($kayit->EslesenUrunNo) > 0) {
-                    $aktifGorev =
-                        DB::table('tbBolumHavuz')->where('UrunIDNo', $kayit->EslesenUrunNo)->count() +
-                        DB::table('tbPersonelGorev')->where('UrunIDNo', $kayit->EslesenUrunNo)->count();
-                } elseif (intval($kayit->GorevNo) > 0) {
-                    $aktifGorev = DB::table('tbBolumHavuz')->where('No', $kayit->GorevNo)->count();
-                }
+                $aktifGorev = $this->countOpenProductionRowsForOrder(
+                    intval($kayit->No ?? 0),
+                    intval($kayit->EslesenUrunNo ?? 0),
+                    (string) ($kayit->EslesenUrunTur ?? ''),
+                    intval($kayit->GorevNo ?? 0)
+                );
 
                 if ($aktifGorev !== 0) {
                     continue;
@@ -1660,7 +1886,7 @@ class SiparisApiController extends Controller
                 });
             }
 
-            $items = DB::table('tbSiparisSatir')
+            $rows = DB::table('tbSiparisSatir')
                 ->where('Durum', 'PasifDevamEden')
                 ->orderByDesc('GuncellemeTarihi')
                 ->get([
@@ -1683,18 +1909,73 @@ class SiparisApiController extends Controller
                     'GorevNo',
                     'GuncellemeTarihi',
                     'YuklemeTarihi',
-                ])
-                ->map(function ($row) {
-                    $eslesenUrunNo = intval($row->EslesenUrunNo ?? 0);
-                    $eslesenUrunTur = (string) ($row->EslesenUrunTur ?? '');
+                ]);
+
+            $groupedRows = $rows->groupBy(function ($row) {
+                return (string) ($row->EslesenUrunTur ?? '') . '|' . intval($row->EslesenUrunNo ?? 0);
+            });
+
+            $itemsByNo = [];
+
+            foreach ($groupedRows as $groupRows) {
+                $sample = $groupRows->first();
+                $eslesenUrunNo = intval($sample->EslesenUrunNo ?? 0);
+                $eslesenUrunTur = (string) ($sample->EslesenUrunTur ?? '');
+                $globalPipelineSteps = $this->buildPipelineSteps($eslesenUrunNo, $eslesenUrunTur);
+                $allocationOrders = $this->findActiveOrderRowsForProduct($eslesenUrunNo, $eslesenUrunTur);
+
+                if ($allocationOrders->isEmpty()) {
+                    $allocationOrders = $groupRows->map(function ($row) {
+                        return (object) [
+                            'No' => intval($row->No ?? 0),
+                            'Adet' => intval($row->Adet ?? 0),
+                            'IsEmriTarihi' => $row->IsEmriTarihi ?? null,
+                        ];
+                    })->values();
+                }
+
+                foreach ($groupRows as $row) {
                     $gorevNo = intval($row->GorevNo ?? 0);
+                    $trackedPipelineSteps = $this->buildTrackedPipelineSteps(intval($row->No ?? 0), $eslesenUrunNo, $eslesenUrunTur);
+                    $pipelineSteps = $trackedPipelineSteps;
+                    $allocationNote = '';
 
-                    [$aktifGorevSayisi, $bitenGorevSayisi, $aktifBolumler] = $this->buildPasifDevamEdenProgress($eslesenUrunNo, $eslesenUrunTur, $gorevNo);
-                    $yuzde = ($bitenGorevSayisi > 0 || $aktifGorevSayisi > 0)
-                        ? (int) round(($bitenGorevSayisi * 100) / ($bitenGorevSayisi + $aktifGorevSayisi))
-                        : 0;
+                    if (empty($pipelineSteps)) {
+                        $pipelineSteps = $globalPipelineSteps;
+                    }
 
-                    return [
+                    if (
+                        empty($trackedPipelineSteps)
+                        && $eslesenUrunTur === 'Nihai'
+                        && $eslesenUrunNo > 0
+                        && !empty($globalPipelineSteps)
+                        && $allocationOrders->count() > 1
+                    ) {
+                        $pipelineSteps = $this->buildOrderSpecificPipelineSteps(
+                            $globalPipelineSteps,
+                            $allocationOrders,
+                            intval($row->No)
+                        );
+
+                        $toplamPaylasilanAdet = intval($allocationOrders->sum(function ($order) {
+                            return intval($order->Adet ?? 0);
+                        }));
+
+                        if ($toplamPaylasilanAdet > intval($row->Adet ?? 0)) {
+                            $allocationNote = 'Aynı ürünün aktif siparişleri arasında, sipariş adedine göre paylaştırılmış görünüm gösteriliyor.';
+                        }
+                    }
+
+                    if (!empty($pipelineSteps)) {
+                        [$aktifGorevSayisi, $bitenGorevSayisi, $aktifBolumler, $yuzde] = $this->summarizePipelineProgress($pipelineSteps);
+                    } else {
+                        [$aktifGorevSayisi, $bitenGorevSayisi, $aktifBolumler] = $this->buildPasifDevamEdenProgress($eslesenUrunNo, $eslesenUrunTur, $gorevNo);
+                        $yuzde = ($bitenGorevSayisi > 0 || $aktifGorevSayisi > 0)
+                            ? (int) round(($bitenGorevSayisi * 100) / ($bitenGorevSayisi + $aktifGorevSayisi))
+                            : 0;
+                    }
+
+                    $itemsByNo[intval($row->No)] = [
                         'no' => intval($row->No),
                         'siparisNo' => (string) ($row->SiparisNo ?? ''),
                         'pazaryeri' => (string) ($row->Pazaryeri ?? ''),
@@ -1718,9 +1999,15 @@ class SiparisApiController extends Controller
                         'yuzde' => $yuzde,
                         'gecenSure' => $this->humanElapsedSince($row->IsEmriTarihi),
                         'aktifBolumler' => $aktifBolumler,
+                        'pipelineSteps' => $pipelineSteps,
+                        'allocationNote' => $allocationNote,
                     ];
-                })
-                ->values();
+                }
+            }
+
+            $items = $rows->map(function ($row) use ($itemsByNo) {
+                return $itemsByNo[intval($row->No)] ?? null;
+            })->filter()->values();
 
             return response()->json([
                 'success' => true,
@@ -1742,7 +2029,8 @@ class SiparisApiController extends Controller
                 return response()->json(['success' => false, 'message' => 'Geçersiz satır numarası.']);
             }
 
-            $mevcut = DB::table('tbSiparisSatir')->where('No', $satirNo)->value('Durum');
+            $beforeOrder = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+            $mevcut = $beforeOrder->Durum ?? null;
             if ($mevcut !== 'PasifDevamEden') {
                 return response()->json(['success' => false, 'message' => 'Bu sipariş PasifDevamEden durumunda değil.']);
             }
@@ -1754,6 +2042,23 @@ class SiparisApiController extends Controller
                     'Aktif' => 1,
                     'GuncellemeTarihi' => now(),
                 ]);
+
+            $afterOrder = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+            $this->logCenterEvent([
+                'event_type' => 'order_reactivated',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => $satirNo,
+                'order_item_no' => $satirNo,
+                'order_no' => (string) (($afterOrder->SiparisNo ?? '') ?: ($beforeOrder->SiparisNo ?? '')),
+                'work_order_no' => intval($afterOrder->GorevNo ?? $beforeOrder->GorevNo ?? 0) > 0
+                    ? intval($afterOrder->GorevNo ?? $beforeOrder->GorevNo ?? 0)
+                    : null,
+                'status_before' => $beforeOrder->Durum ?? null,
+                'status_after' => $afterOrder->Durum ?? null,
+                'next_step_human' => 'Kayit tekrar aktif. Havuz ve personel gorevleri takibe alinmali.',
+                'payload_before' => $this->serializeRecord($beforeOrder),
+                'payload_after' => $this->serializeRecord($afterOrder),
+            ]);
 
             return response()->json(['success' => true, 'message' => 'Sipariş tekrar aktif edildi.']);
         } catch (\Exception $e) {
@@ -1779,8 +2084,8 @@ class SiparisApiController extends Controller
                 $adet = intval($dusum['adet'] ?? 0);
                 if ($araNo > 0 && $adet > 0) {
                     DB::statement("
-                        UPDATE tbBolumAraStok 
-                        SET TamponMiktar = CASE WHEN TamponMiktar + ? > Adet THEN Adet ELSE TamponMiktar + ? END 
+                        UPDATE tbBolumAraStok
+                        SET TamponMiktar = CASE WHEN TamponMiktar + ? > Adet THEN Adet ELSE TamponMiktar + ? END
                         WHERE AraUrunAdiNo = ?
                     ", [$adet, $adet, $araNo]);
                 }
@@ -1822,63 +2127,117 @@ class SiparisApiController extends Controller
         } catch (\Exception $e) { /* Log hatası ana işlemi engellemesin */ }
     }
 
+    private function logCenterEvent(array $attributes): void
+    {
+        try {
+            $this->workOrderEventLogger->log($attributes);
+        } catch (\Throwable) {
+            // Event merkezi ana akisi bozmasin.
+        }
+    }
+
+    private function serializeRecord(object|array|null $record): ?array
+    {
+        if ($record === null) {
+            return null;
+        }
+
+        if (is_array($record)) {
+            return $record;
+        }
+
+        return json_decode(json_encode($record, JSON_UNESCAPED_UNICODE), true);
+    }
+
     /**
      * Stoktan düşme ortak iç metot
      */
     private function deductStockForOrder(int $satirNo): string
     {
         try {
-            $satir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
-            if (!$satir) return 'Sipariş bulunamadı.';
+            return DB::transaction(function () use ($satirNo) {
+                $satir = DB::table('tbSiparisSatir')
+                    ->where('No', $satirNo)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$satir) return 'Sipariş bulunamadı.';
 
-            $adet = intval($satir->Adet ?? 0);
-            $eslesenUrunNo = intval($satir->EslesenUrunNo ?? 0);
-            $eslesenUrunTur = $satir->EslesenUrunTur ?? '';
-            $durum = $satir->Durum ?? '';
+                $adet = intval($satir->Adet ?? 0);
+                $eslesenUrunNo = intval($satir->EslesenUrunNo ?? 0);
+                $eslesenUrunTur = $satir->EslesenUrunTur ?? '';
+                $durum = $satir->Durum ?? '';
 
-            if ($durum !== 'UretimBekliyor' && $durum !== 'UretimdenKarsilaniyor') {
-                return 'Sadece \'Üretim Bekliyor\' veya \'Üretime Bağlandı\' (GİED) durumundaki siparişler stoktan düşülebilir.';
-            }
-            if ($eslesenUrunNo <= 0) return 'Eşleşen ürün bulunamadı.';
+                if ($durum !== 'UretimBekliyor' && $durum !== 'UretimdenKarsilaniyor') {
+                    return 'Sadece \'Üretim Bekliyor\' veya \'Üretime Bağlandı\' (GİED) durumundaki siparişler stoktan düşülebilir.';
+                }
+                if ($eslesenUrunNo <= 0) return 'Eşleşen ürün bulunamadı.';
 
-            // AraUrunAdiNo'yu bul
-            $araUrunNo = 0;
-            if ($eslesenUrunTur === 'Nihai') {
-                $urunID = DB::table('tbUrunler')->where('No', $eslesenUrunNo)->value('UrunID');
-                if (empty($urunID)) return 'Ürün adı bulunamadı.';
-                $araUrunNo = DB::table('tbAraUrun')->where('AraUrunAdi', trim($urunID))->value('No') ?? 0;
-            } elseif ($eslesenUrunTur === 'Ara') {
-                $araUrunNo = $eslesenUrunNo;
-            }
+                $araUrunNo = 0;
+                if ($eslesenUrunTur === 'Nihai') {
+                    $urunID = DB::table('tbUrunler')->where('No', $eslesenUrunNo)->value('UrunID');
+                    if (empty($urunID)) return 'Ürün adı bulunamadı.';
+                    $araUrunNo = DB::table('tbAraUrun')->where('AraUrunAdi', trim($urunID))->value('No') ?? 0;
+                } elseif ($eslesenUrunTur === 'Ara') {
+                    $araUrunNo = $eslesenUrunNo;
+                }
 
-            if ($araUrunNo <= 0) return 'Ara ürün bulunamadı.';
+                if ($araUrunNo <= 0) return 'Ara ürün bulunamadı.';
 
-            // Stok kontrol
-            $mevcutStok = intval(DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araUrunNo)->sum('Adet'));
-            if ($mevcutStok < $adet) return "Yetersiz stok. Mevcut: {$mevcutStok}, İstenen: {$adet}";
+                $stokRows = DB::table('tbBolumAraStok')
+                    ->where('AraUrunAdiNo', $araUrunNo)
+                    ->where('Adet', '>', 0)
+                    ->orderBy('No')
+                    ->lockForUpdate()
+                    ->get();
 
-            // Stoktan düş
-            $remaining = $adet;
-            $stokRows = DB::table('tbBolumAraStok')->where('AraUrunAdiNo', $araUrunNo)->where('Adet', '>', 0)->get();
-            foreach ($stokRows as $stokRow) {
-                if ($remaining <= 0) break;
-                $dusulecek = min($remaining, intval($stokRow->Adet));
-                DB::table('tbBolumAraStok')->where('No', $stokRow->No)->update([
-                    'Adet' => DB::raw("Adet - {$dusulecek}"),
-                    'TamponMiktar' => DB::raw("CASE WHEN TamponMiktar - {$dusulecek} < 0 THEN 0 ELSE TamponMiktar - {$dusulecek} END")
+                $mevcutStok = intval($stokRows->sum(fn ($row) => intval($row->Adet ?? 0)));
+                if ($mevcutStok < $adet) return "Yetersiz stok. Mevcut: {$mevcutStok}, İstenen: {$adet}";
+
+                $remaining = $adet;
+                foreach ($stokRows as $stokRow) {
+                    if ($remaining <= 0) break;
+                    $dusulecek = min($remaining, intval($stokRow->Adet ?? 0));
+                    DB::table('tbBolumAraStok')->where('No', $stokRow->No)->update([
+                        'Adet' => DB::raw("Adet - {$dusulecek}"),
+                        'TamponMiktar' => DB::raw("CASE WHEN TamponMiktar - {$dusulecek} < 0 THEN 0 ELSE TamponMiktar - {$dusulecek} END")
+                    ]);
+                    $remaining -= $dusulecek;
+                }
+
+                DB::table('tbSiparisSatir')->where('No', $satirNo)->update([
+                    'Durum' => 'StokKarsilandi',
+                    'BagliOlduguOzelUretimNo' => null,
+                    'GuncellemeTarihi' => now(),
                 ]);
-                $remaining -= $dusulecek;
-            }
 
-            // Durumu güncelle
-            DB::table('tbSiparisSatir')->where('No', $satirNo)->update([
-                'Durum' => 'StokKarsilandi', 'GuncellemeTarihi' => now()
-            ]);
+                $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+                $this->logCenterEvent([
+                    'event_type' => 'stock_deducted',
+                    'aggregate_type' => 'order_item',
+                    'aggregate_id' => $satirNo,
+                    'order_item_no' => $satirNo,
+                    'order_no' => (string) (($updatedSatir->SiparisNo ?? '') ?: ($satir->SiparisNo ?? '')),
+                    'work_order_no' => intval($updatedSatir->GorevNo ?? $satir->GorevNo ?? 0) > 0
+                        ? intval($updatedSatir->GorevNo ?? $satir->GorevNo ?? 0)
+                        : null,
+                    'status_before' => $durum,
+                    'status_after' => $updatedSatir->Durum ?? 'StokKarsilandi',
+                    'special_production_no' => intval($satir->BagliOlduguOzelUretimNo ?? 0) > 0
+                        ? intval($satir->BagliOlduguOzelUretimNo)
+                        : null,
+                    'next_step_human' => 'Kayit stoktan karsilandi; sevk ve son kontrol asamalari kontrol edilmeli.',
+                    'payload_before' => $this->serializeRecord($satir),
+                    'payload_after' => $this->serializeRecord($updatedSatir),
+                    'context' => [
+                        'ara_urun_no' => $araUrunNo,
+                        'deducted_amount' => $adet,
+                    ],
+                ]);
 
-            // Stok düşüşü sonrası eşik kontrolü (Original: CheckStockThreshold)
-            $this->checkStockThreshold($araUrunNo);
+                $this->checkStockThreshold($araUrunNo);
 
-            return 'OK';
+                return 'OK';
+            });
         } catch (\Exception $e) {
             return 'Hata: ' . $e->getMessage();
         }
@@ -1900,6 +2259,19 @@ class SiparisApiController extends Controller
                 throw new \Exception('Geçersiz parametreler.');
             }
 
+            $order = DB::table('tbSiparisSatir')->where('No', $siparisSatirNo)->first();
+            if (!$order) {
+                throw new \Exception('Sipariş satırı bulunamadı.');
+            }
+
+            if (intval($order->Aktif ?? 0) !== 1 || ($order->Durum ?? '') !== 'UretimBekliyor') {
+                throw new \Exception('Eşleşme sadece üretim bekleyen aktif siparişlerde değiştirilebilir.');
+            }
+
+            if (!empty($order->BagliOlduguOzelUretimNo)) {
+                throw new \Exception('GİED ile rezerve edilmiş siparişin eşleşmesi değiştirilemez.');
+            }
+
             // 1) Sipariş satırını güncelle
             DB::table('tbSiparisSatir')->where('No', $siparisSatirNo)->update([
                 'EslesenUrunNo' => $eslesenUrunNo,
@@ -1910,7 +2282,7 @@ class SiparisApiController extends Controller
             ]);
 
             // 2) Ürün adını al
-            $urunAdi = DB::table('tbSiparisSatir')->where('No', $siparisSatirNo)->value('UrunAdi') ?? '';
+            $urunAdi = $order->UrunAdi ?? '';
 
             // 3) Eşleşen ürün adını al
             $cachedProductName = '';
@@ -1925,9 +2297,9 @@ class SiparisApiController extends Controller
                 DB::statement("
                     INSERT INTO tbUrunEslestirmeOnbellek (ExcelUrunAdi, EslesenUrunNo, EslesenUrunTur)
                     VALUES (?, ?, ?)
-                    ON DUPLICATE KEY UPDATE 
-                        EslesenUrunNo = VALUES(EslesenUrunNo), 
-                        EslesenUrunTur = VALUES(EslesenUrunTur), 
+                    ON DUPLICATE KEY UPDATE
+                        EslesenUrunNo = VALUES(EslesenUrunNo),
+                        EslesenUrunTur = VALUES(EslesenUrunTur),
                         OlusturmaTarihi = CURRENT_TIMESTAMP
                 ", [$urunAdi, $eslesenUrunNo, $eslesenUrunTur]);
 
@@ -1935,6 +2307,9 @@ class SiparisApiController extends Controller
                 $updatedCount = DB::table('tbSiparisSatir')
                     ->where('UrunAdi', $urunAdi)
                     ->where('EslesmeYontemi', '!=', 'Manuel')
+                    ->where('Aktif', 1)
+                    ->where('Durum', 'UretimBekliyor')
+                    ->whereNull('BagliOlduguOzelUretimNo')
                     ->where('No', '!=', $siparisSatirNo)
                     ->update([
                         'EslesenUrunNo' => $eslesenUrunNo,
@@ -2228,24 +2603,24 @@ class SiparisApiController extends Controller
         $aktifBolumler = '';
 
         if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
-            $aktifHavuz = DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->count();
-            $aktifPersonel = DB::table('tbPersonelGorev')->where('UrunIDNo', $eslesenUrunNo)->count();
-            $aktifGorevSayisi = $aktifHavuz + $aktifPersonel;
-            $bitenGorevSayisi = DB::table('tbGorevler')->where('UrunIDNo', $eslesenUrunNo)->count();
+            $aktifGorevSayisi = (int) DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->count()
+                + (int) DB::table('tbPersonelGorev')->where('UrunIDNo', $eslesenUrunNo)->count();
+
+            $bitenGorevSayisi = (int) DB::table('tbGorevler')->where('UrunIDNo', $eslesenUrunNo)->count();
 
             if ($aktifGorevSayisi > 0) {
                 $bekleyenBolumler = DB::table('tbBolumHavuz as h')
                     ->join('tbBolum as b', 'h.BolumAdiNo', '=', 'b.No')
                     ->where('h.UrunIDNo', $eslesenUrunNo)
                     ->distinct()
-                    ->pluck(DB::raw("CONCAT(b.BolumAdi, ' (Bekliyor)')"))
+                    ->pluck(DB::raw("CONCAT(b.BolumAdi, ' (Bekliyor)') as label"))
                     ->toArray();
 
                 $uretimdePersonel = DB::table('tbPersonelGorev as pg')
                     ->join('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
                     ->where('pg.UrunIDNo', $eslesenUrunNo)
                     ->distinct()
-                    ->pluck(DB::raw("CONCAT(p.Ad, ' (Üretimde)')"))
+                    ->pluck(DB::raw("CONCAT(p.Ad, ' (Üretimde)') as label"))
                     ->toArray();
 
                 $aktifBolumler = implode(', ', array_merge($bekleyenBolumler, $uretimdePersonel));
@@ -2256,6 +2631,912 @@ class SiparisApiController extends Controller
         }
 
         return [$aktifGorevSayisi, $bitenGorevSayisi, $aktifBolumler];
+    }
+
+    /**
+     * Görsel üretim pipeline'ı oluşturur.
+     * Her bölüm (departman) için durumu hesaplar: tamamlandı / üretimde / bekliyor / başlanmadı
+     * Tooltip bilgisi olarak detaylı görev kayıtlarını döndürür.
+     */
+    private function buildPipelineSteps(int $eslesenUrunNo, string $eslesenUrunTur): array
+    {
+        if ($eslesenUrunTur !== 'Nihai' || $eslesenUrunNo <= 0) {
+            return [];
+        }
+
+        $bolumler = DB::table('tbBolum')->orderBy('No')->get();
+        if ($bolumler->isEmpty()) {
+            return [];
+        }
+
+        // Havuzda bekleyen görevler (detaylı)
+        $havuzKayitlari = DB::table('tbBolumHavuz')
+            ->where('UrunIDNo', $eslesenUrunNo)
+            ->select('No', 'BolumAdiNo', 'UrunIDNo', 'AraUrunAdiNo', 'Adet', 'ToplamAdet', 'GorevBaslangicTarihi', 'Aciklama')
+            ->get();
+
+        $havuz = $havuzKayitlari->groupBy('BolumAdiNo');
+
+        // Aktif üretimdeki görevler (detaylı)
+        $personelGorevler = DB::table('tbPersonelGorev')
+            ->where('UrunIDNo', $eslesenUrunNo)
+            ->select('No', 'BolumAdiNo', 'UrunIDNo', 'AraUrunAdiNo', 'PersonelNo', 'Adet', 'GorevBaslamaTarihi')
+            ->get();
+
+        $uretimde = $personelGorevler->groupBy('BolumAdiNo');
+
+        // Personel adlarını al
+        $personelNolar = $personelGorevler->pluck('PersonelNo')->unique()->values();
+        $personelIsimleri = [];
+        if ($personelNolar->isNotEmpty()) {
+            DB::table('tbPersonel')->whereIn('PersonelNo', $personelNolar)->get()->each(function ($p) use (&$personelIsimleri) {
+                $personelIsimleri[$p->PersonelNo] = trim(($p->Ad ?? '') . ' ' . ($p->Soyad ?? ''));
+            });
+        }
+
+        // Biten görevler (detaylı)
+        $bitenKayitlari = DB::table('tbGorevler')
+            ->where('UrunIDNo', $eslesenUrunNo)
+            ->select('No', 'BolumAdiNo', 'UrunIDNo', 'AraUrunAdiNo', 'ToplamAdet', 'GorevBaslamaTarihi', 'GorevBitisTarihi', 'PersonelNo')
+            ->get();
+
+        $bitenler = $bitenKayitlari->groupBy('BolumAdiNo');
+
+        // Personel adları (biten görevlerdeki)
+        $bitenPersonelNolar = $bitenKayitlari->pluck('PersonelNo')->unique()->filter()->values();
+        if ($bitenPersonelNolar->isNotEmpty()) {
+            DB::table('tbPersonel')->whereIn('PersonelNo', $bitenPersonelNolar)->get()->each(function ($p) use (&$personelIsimleri) {
+                $personelIsimleri[$p->PersonelNo] = trim(($p->Ad ?? '') . ' ' . ($p->Soyad ?? ''));
+            });
+        }
+
+        $araUrunNolar = $havuzKayitlari->pluck('AraUrunAdiNo')
+            ->merge($personelGorevler->pluck('AraUrunAdiNo'))
+            ->merge($bitenKayitlari->pluck('AraUrunAdiNo'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $urunNolar = $havuzKayitlari->pluck('UrunIDNo')
+            ->merge($personelGorevler->pluck('UrunIDNo'))
+            ->merge($bitenKayitlari->pluck('UrunIDNo'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $araUrunIsimleri = [];
+        if ($araUrunNolar->isNotEmpty()) {
+            DB::table('tbAraUrun')
+                ->whereIn('No', $araUrunNolar)
+                ->select('No', 'AraUrunAdi')
+                ->get()
+                ->each(function ($row) use (&$araUrunIsimleri) {
+                    $araUrunIsimleri[$row->No] = trim((string) ($row->AraUrunAdi ?? ''));
+                });
+        }
+
+        $urunIsimleri = [];
+        if ($urunNolar->isNotEmpty()) {
+            DB::table('tbUrunler')
+                ->whereIn('No', $urunNolar)
+                ->select('No', 'SistemAdi', 'UrunID')
+                ->get()
+                ->each(function ($row) use (&$urunIsimleri) {
+                    $urunIsimleri[$row->No] = trim((string) (($row->SistemAdi ?: $row->UrunID) ?? ''));
+                });
+        }
+
+        $resolveTaskName = function ($row) use ($araUrunIsimleri, $urunIsimleri): string {
+            $araUrunNo = intval($row->AraUrunAdiNo ?? 0);
+            if ($araUrunNo > 0 && !empty($araUrunIsimleri[$araUrunNo])) {
+                return $araUrunIsimleri[$araUrunNo];
+            }
+
+            $urunNo = intval($row->UrunIDNo ?? 0);
+            if ($urunNo > 0 && !empty($urunIsimleri[$urunNo])) {
+                return $urunIsimleri[$urunNo];
+            }
+
+            return 'Görev adı bulunamadı';
+        };
+
+        $steps = [];
+        foreach ($bolumler as $bolum) {
+            $bNo = $bolum->No;
+            $bAdi = $bolum->BolumAdi;
+
+            $havuzda = $havuz->get($bNo);
+            $aktifUretimde = $uretimde->get($bNo);
+            $bitmis = $bitenler->get($bNo);
+
+            $status = 'baslanmadi';
+            $statusLabel = 'Başlanmadı';
+            $detay = '';
+            $adet = 0;
+            $toplamAdet = 0;
+            $personelAd = '';
+            $tooltipLines = [];
+            $activeRecords = [];
+            $waitingRecords = [];
+            $completedRecords = [];
+
+            if ($aktifUretimde && $aktifUretimde->isNotEmpty()) {
+                $status = 'uretimde';
+                $statusLabel = 'Üretimde';
+                $adet = $aktifUretimde->sum('Adet');
+                $ilkPersonel = $aktifUretimde->first();
+                $personelAd = $personelIsimleri[$ilkPersonel->PersonelNo] ?? '';
+                $detay = $adet . ' adet üretiliyor';
+
+                foreach ($aktifUretimde as $pg) {
+                    $pAdi = $personelIsimleri[$pg->PersonelNo] ?? 'Bilinmeyen';
+                    $gorevAdi = $resolveTaskName($pg);
+                    $tarih = '';
+                    try {
+                        $tarih = $pg->GorevBaslamaTarihi ? Carbon::parse($pg->GorevBaslamaTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $tarih = (string) ($pg->GorevBaslamaTarihi ?? '');
+                    }
+                    $activeRecords[] = [
+                        'tarih' => $tarih,
+                        'personelAd' => $pAdi,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($pg->Adet ?? 0),
+                    ];
+                    $tooltipLines[] = ($tarih ? $tarih . ' - ' : '') . $pAdi . ': ' . $gorevAdi . ' / ' . $pg->Adet . ' adet';
+                }
+            } elseif ($havuzda && $havuzda->isNotEmpty()) {
+                $status = 'bekliyor';
+                $statusLabel = 'Bekliyor';
+                $adet = $havuzda->sum('Adet');
+                $toplamAdet = $havuzda->sum('ToplamAdet');
+                $detay = $adet . '/' . $toplamAdet . ' adet havuzda';
+
+                foreach ($havuzda as $h) {
+                    $gorevAdi = $resolveTaskName($h);
+                    $tarih = '';
+                    try {
+                        $tarih = $h->GorevBaslangicTarihi ? Carbon::parse($h->GorevBaslangicTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $tarih = (string) ($h->GorevBaslangicTarihi ?? '');
+                    }
+                    $waitingRecords[] = [
+                        'tarih' => $tarih,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($h->Adet ?? 0),
+                        'toplamAdet' => intval($h->ToplamAdet ?? 0),
+                        'aciklama' => (string) ($h->Aciklama ?? ''),
+                    ];
+                    $tooltipLines[] = ($tarih ? $tarih . ' - ' : '') . $gorevAdi . ': ' . $h->Adet . '/' . $h->ToplamAdet . ' adet bekliyor' . ($h->Aciklama ? ' (' . $h->Aciklama . ')' : '');
+                }
+            } elseif ($bitmis && $bitmis->isNotEmpty()) {
+                $status = 'tamamlandi';
+                $statusLabel = 'Tamamlandı';
+                $adet = $bitmis->sum('ToplamAdet');
+                $detay = $adet . ' adet tamamlandı';
+
+                foreach ($bitmis as $g) {
+                    $pAdi = isset($g->PersonelNo) ? ($personelIsimleri[$g->PersonelNo] ?? '') : '';
+                    $gorevAdi = $resolveTaskName($g);
+                    $baslangic = '';
+                    $bitis = '';
+                    try {
+                        $baslangic = $g->GorevBaslamaTarihi ? Carbon::parse($g->GorevBaslamaTarihi)->format('d.m.Y') : '';
+                        $bitis = $g->GorevBitisTarihi ? Carbon::parse($g->GorevBitisTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $baslangic = (string) ($g->GorevBaslamaTarihi ?? '');
+                        $bitis = (string) ($g->GorevBitisTarihi ?? '');
+                    }
+                    $satir = '';
+                    if ($baslangic && $bitis) {
+                        $satir = $baslangic . ' → ' . $bitis;
+                    } elseif ($bitis) {
+                        $satir = $bitis;
+                    }
+                    $satir .= ': ' . $gorevAdi . ' / ' . $g->ToplamAdet . ' adet';
+                    if ($pAdi) {
+                        $satir .= ' (' . $pAdi . ')';
+                    }
+                    $completedRecords[] = [
+                        'baslangic' => $baslangic,
+                        'bitis' => $bitis,
+                        'personelAd' => $pAdi,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($g->ToplamAdet ?? 0),
+                    ];
+                    $tooltipLines[] = $satir;
+                }
+            }
+
+            if (empty($activeRecords) && $aktifUretimde && $aktifUretimde->isNotEmpty()) {
+                foreach ($aktifUretimde as $pg) {
+                    $pAdi = $personelIsimleri[$pg->PersonelNo] ?? 'Bilinmeyen';
+                    $gorevAdi = $resolveTaskName($pg);
+                    $tarih = '';
+                    try {
+                        $tarih = $pg->GorevBaslamaTarihi ? Carbon::parse($pg->GorevBaslamaTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $tarih = (string) ($pg->GorevBaslamaTarihi ?? '');
+                    }
+
+                    $activeRecords[] = [
+                        'tarih' => $tarih,
+                        'personelAd' => $pAdi,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($pg->Adet ?? 0),
+                    ];
+                }
+            }
+
+            if (empty($waitingRecords) && $havuzda && $havuzda->isNotEmpty()) {
+                foreach ($havuzda as $h) {
+                    $gorevAdi = $resolveTaskName($h);
+                    $tarih = '';
+                    try {
+                        $tarih = $h->GorevBaslangicTarihi ? Carbon::parse($h->GorevBaslangicTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $tarih = (string) ($h->GorevBaslangicTarihi ?? '');
+                    }
+
+                    $waitingRecords[] = [
+                        'tarih' => $tarih,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($h->Adet ?? 0),
+                        'toplamAdet' => intval($h->ToplamAdet ?? 0),
+                        'aciklama' => (string) ($h->Aciklama ?? ''),
+                    ];
+                }
+            }
+
+            if (empty($completedRecords) && $bitmis && $bitmis->isNotEmpty()) {
+                foreach ($bitmis as $g) {
+                    $pAdi = isset($g->PersonelNo) ? ($personelIsimleri[$g->PersonelNo] ?? '') : '';
+                    $gorevAdi = $resolveTaskName($g);
+                    $baslangic = '';
+                    $bitis = '';
+                    try {
+                        $baslangic = $g->GorevBaslamaTarihi ? Carbon::parse($g->GorevBaslamaTarihi)->format('d.m.Y') : '';
+                        $bitis = $g->GorevBitisTarihi ? Carbon::parse($g->GorevBitisTarihi)->format('d.m.Y') : '';
+                    } catch (\Exception $e) {
+                        $baslangic = (string) ($g->GorevBaslamaTarihi ?? '');
+                        $bitis = (string) ($g->GorevBitisTarihi ?? '');
+                    }
+
+                    $completedRecords[] = [
+                        'baslangic' => $baslangic,
+                        'bitis' => $bitis,
+                        'personelAd' => $pAdi,
+                        'gorevAdi' => $gorevAdi,
+                        'adet' => intval($g->ToplamAdet ?? 0),
+                    ];
+                }
+            }
+
+            $steps[] = [
+                'bolumNo' => $bNo,
+                'bolumAdi' => $bAdi,
+                'status' => $status,
+                'statusLabel' => $statusLabel,
+                'detay' => $detay,
+                'adet' => $adet,
+                'toplamAdet' => $toplamAdet,
+                'personelAd' => $personelAd,
+                'tooltipLines' => $tooltipLines,
+                'activeAdet' => $aktifUretimde && $aktifUretimde->isNotEmpty() ? intval($aktifUretimde->sum('Adet')) : 0,
+                'waitingAdet' => $havuzda && $havuzda->isNotEmpty() ? intval($havuzda->sum('Adet')) : 0,
+                'waitingToplamAdet' => $havuzda && $havuzda->isNotEmpty() ? intval($havuzda->sum('ToplamAdet')) : 0,
+                'completedAdet' => $bitmis && $bitmis->isNotEmpty() ? intval($bitmis->sum('ToplamAdet')) : 0,
+                'activeRecords' => $activeRecords,
+                'waitingRecords' => $waitingRecords,
+                'completedRecords' => $completedRecords,
+            ];
+        }
+
+        return $steps;
+    }
+
+    private function pendingApprovalSql(string $column = 'Onay'): string
+    {
+        return "({$column} IS NULL OR {$column} = 0 OR {$column} = '0' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'false')";
+    }
+
+    private function isLegacyApprovedValue($value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['1', 'true', 'evet', 'yes'], true);
+    }
+
+    private function productionTraceEnabled(): bool
+    {
+        return app(BomService::class)->supportsProductionOrderTrace();
+    }
+
+    private function hasTrackedProductionRows(int $siparisSatirNo): bool
+    {
+        if ($siparisSatirNo <= 0 || !$this->productionTraceEnabled()) {
+            return false;
+        }
+
+        return DB::table('tbBolumHavuz')->where('SiparisSatirNo', $siparisSatirNo)->exists()
+            || DB::table('tbPersonelGorev')->where('SiparisSatirNo', $siparisSatirNo)->exists()
+            || DB::table('tbGorevler')->where('SiparisSatirNo', $siparisSatirNo)->exists();
+    }
+
+    private function countOpenProductionRowsForOrder(int $siparisSatirNo, int $eslesenUrunNo, string $eslesenUrunTur, int $gorevNo): int
+    {
+        if ($this->hasTrackedProductionRows($siparisSatirNo)) {
+            $havuzCount = intval(DB::table('tbBolumHavuz')->where('SiparisSatirNo', $siparisSatirNo)->count());
+            $personelCount = intval(
+                DB::table('tbPersonelGorev')
+                    ->where('SiparisSatirNo', $siparisSatirNo)
+                    ->where(function ($query) {
+                        $query->whereRaw($this->pendingApprovalSql())
+                            ->orWhere('BekleyenAdet', '>', 0);
+                    })
+                    ->count()
+            );
+
+            return $havuzCount + $personelCount;
+        }
+
+        if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
+            return intval(DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->count())
+                + intval(DB::table('tbPersonelGorev')->where('UrunIDNo', $eslesenUrunNo)->count());
+        }
+
+        if ($gorevNo > 0) {
+            return intval(DB::table('tbBolumHavuz')->where('No', $gorevNo)->count());
+        }
+
+        return 0;
+    }
+
+    private function deleteProductionRowsForOrder(object $satir): int
+    {
+        $satirNo = intval($satir->No ?? 0);
+
+        if ($this->hasTrackedProductionRows($satirNo)) {
+            return intval(DB::table('tbBolumHavuz')->where('SiparisSatirNo', $satirNo)->delete())
+                + intval(DB::table('tbPersonelGorev')->where('SiparisSatirNo', $satirNo)->delete())
+                + intval(DB::table('tbGorevler')->where('SiparisSatirNo', $satirNo)->delete());
+        }
+
+        $gorevNo = intval($satir->GorevNo ?? 0);
+        $eslesenUrunNo = intval($satir->EslesenUrunNo ?? 0);
+        $eslesenUrunTur = (string) ($satir->EslesenUrunTur ?? '');
+
+        if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0) {
+            return intval(DB::table('tbBolumHavuz')->where('UrunIDNo', $eslesenUrunNo)->delete());
+        }
+
+        if ($gorevNo > 0) {
+            return intval(DB::table('tbBolumHavuz')->where('No', $gorevNo)->delete());
+        }
+
+        return 0;
+    }
+
+    private function buildTrackedPipelineSteps(int $siparisSatirNo, int $eslesenUrunNo, string $eslesenUrunTur): array
+    {
+        if ($siparisSatirNo <= 0 || !$this->hasTrackedProductionRows($siparisSatirNo)) {
+            return [];
+        }
+
+        $bolumler = DB::table('tbBolum')->orderBy('No')->get();
+        if ($bolumler->isEmpty()) {
+            return [];
+        }
+
+        $havuzKayitlari = DB::table('tbBolumHavuz')
+            ->where('SiparisSatirNo', $siparisSatirNo)
+            ->select('No', 'BolumAdiNo', 'UrunIDNo', 'AraUrunAdiNo', 'Adet', 'ToplamAdet', 'GorevBaslangicTarihi', 'Aciklama')
+            ->get();
+
+        $personelKayitlari = DB::table('tbPersonelGorev')
+            ->where('SiparisSatirNo', $siparisSatirNo)
+            ->select('No', 'BolumAdiNo', 'UrunIDNo', 'AraUrunAdiNo', 'PersonelNo', 'Adet', 'BekleyenAdet', 'Onay', 'GorevBaslamaTarihi')
+            ->get();
+
+        $uretimdeKayitlari = $personelKayitlari->filter(function ($row) {
+            return intval($row->BekleyenAdet ?? 0) > 0 || !$this->isLegacyApprovedValue($row->Onay ?? null);
+        })->values();
+
+        $tamamlananKayitlari = $personelKayitlari->filter(function ($row) {
+            return $this->isLegacyApprovedValue($row->Onay ?? null) || intval($row->BekleyenAdet ?? 0) <= 0;
+        })->values();
+
+        $havuz = $havuzKayitlari->groupBy('BolumAdiNo');
+        $uretimde = $uretimdeKayitlari->groupBy('BolumAdiNo');
+        $tamamlanan = $tamamlananKayitlari->groupBy('BolumAdiNo');
+
+        $personelIsimleri = [];
+        $personelNolar = $personelKayitlari->pluck('PersonelNo')->filter()->unique()->values();
+        if ($personelNolar->isNotEmpty()) {
+            DB::table('tbPersonel')
+                ->whereIn('PersonelNo', $personelNolar)
+                ->get()
+                ->each(function ($personel) use (&$personelIsimleri) {
+                    $personelIsimleri[$personel->PersonelNo] = trim(($personel->Ad ?? '') . ' ' . ($personel->Soyad ?? ''));
+                });
+        }
+
+        $araUrunNolar = $havuzKayitlari->pluck('AraUrunAdiNo')
+            ->merge($personelKayitlari->pluck('AraUrunAdiNo'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $urunNolar = collect([$eslesenUrunNo])
+            ->merge($havuzKayitlari->pluck('UrunIDNo'))
+            ->merge($personelKayitlari->pluck('UrunIDNo'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $araUrunIsimleri = [];
+        if ($araUrunNolar->isNotEmpty()) {
+            DB::table('tbAraUrun')
+                ->whereIn('No', $araUrunNolar)
+                ->select('No', 'AraUrunAdi')
+                ->get()
+                ->each(function ($row) use (&$araUrunIsimleri) {
+                    $araUrunIsimleri[$row->No] = trim((string) ($row->AraUrunAdi ?? ''));
+                });
+        }
+
+        $urunIsimleri = [];
+        if ($urunNolar->isNotEmpty()) {
+            DB::table('tbUrunler')
+                ->whereIn('No', $urunNolar)
+                ->select('No', 'SistemAdi', 'UrunID')
+                ->get()
+                ->each(function ($row) use (&$urunIsimleri) {
+                    $urunIsimleri[$row->No] = trim((string) (($row->SistemAdi ?: $row->UrunID) ?? ''));
+                });
+        }
+
+        $resolveTaskName = function ($row) use ($araUrunIsimleri, $urunIsimleri, $eslesenUrunNo, $eslesenUrunTur) {
+            $araUrunNo = intval($row->AraUrunAdiNo ?? 0);
+            if ($araUrunNo > 0 && !empty($araUrunIsimleri[$araUrunNo])) {
+                return $araUrunIsimleri[$araUrunNo];
+            }
+
+            $urunNo = intval($row->UrunIDNo ?? 0);
+            if ($urunNo > 0 && !empty($urunIsimleri[$urunNo])) {
+                return $urunIsimleri[$urunNo];
+            }
+
+            if ($eslesenUrunTur === 'Nihai' && $eslesenUrunNo > 0 && !empty($urunIsimleri[$eslesenUrunNo])) {
+                return $urunIsimleri[$eslesenUrunNo];
+            }
+
+            return 'Görev adı bulunamadı';
+        };
+
+        $steps = [];
+
+        foreach ($bolumler as $bolum) {
+            $bolumNo = intval($bolum->No ?? 0);
+            $waitingRows = $havuz->get($bolumNo) ?? collect();
+            $activeRows = $uretimde->get($bolumNo) ?? collect();
+            $completedRows = $tamamlanan->get($bolumNo) ?? collect();
+
+            $status = 'baslanmadi';
+            $statusLabel = 'Başlanmadı';
+            $detay = '';
+            $personelAd = '';
+            $adet = 0;
+            $toplamAdet = 0;
+            $tooltipLines = [];
+
+            if ($activeRows->isNotEmpty()) {
+                $status = 'uretimde';
+                $statusLabel = 'Üretimde';
+                $adet = intval($activeRows->sum(function ($row) {
+                    $bekleyen = intval($row->BekleyenAdet ?? 0);
+                    return $bekleyen > 0 ? $bekleyen : intval($row->Adet ?? 0);
+                }));
+                $detay = $adet . ' adet üretiliyor';
+
+                foreach ($activeRows as $record) {
+                    $tarih = trim((string) ($record->GorevBaslamaTarihi ?? ''));
+                    $gorevAdi = $resolveTaskName($record);
+                    $kisi = trim((string) ($personelIsimleri[$record->PersonelNo] ?? ''));
+                    $bekleyen = intval($record->BekleyenAdet ?? 0);
+                    $kayitAdedi = $bekleyen > 0 ? $bekleyen : intval($record->Adet ?? 0);
+
+                    if ($personelAd === '' && $kisi !== '') {
+                        $personelAd = $kisi;
+                    }
+
+                    $tooltipLines[] = ($tarih !== '' ? $tarih . ' - ' : '')
+                        . ($kisi !== '' ? $kisi : 'Bilinmeyen')
+                        . ': '
+                        . $gorevAdi
+                        . ' / '
+                        . $kayitAdedi
+                        . ' adet işleniyor';
+                }
+            } elseif ($waitingRows->isNotEmpty()) {
+                $status = 'bekliyor';
+                $statusLabel = 'Bekliyor';
+                $adet = intval($waitingRows->sum('Adet'));
+                $toplamAdet = intval($waitingRows->sum('ToplamAdet'));
+                $detay = $adet . '/' . $toplamAdet . ' adet havuzda';
+
+                foreach ($waitingRows as $record) {
+                    $tarih = trim((string) ($record->GorevBaslangicTarihi ?? ''));
+                    $gorevAdi = $resolveTaskName($record);
+                    $satir = ($tarih !== '' ? $tarih . ' - ' : '')
+                        . $gorevAdi
+                        . ': '
+                        . intval($record->Adet ?? 0)
+                        . '/'
+                        . intval($record->ToplamAdet ?? 0)
+                        . ' adet bekliyor';
+
+                    if (!empty($record->Aciklama)) {
+                        $satir .= ' (' . trim((string) $record->Aciklama) . ')';
+                    }
+
+                    $tooltipLines[] = $satir;
+                }
+            } elseif ($completedRows->isNotEmpty()) {
+                $status = 'tamamlandi';
+                $statusLabel = 'Tamamlandı';
+                $adet = intval($completedRows->sum(function ($row) {
+                    $tamamlananAdet = intval($row->Adet ?? 0) - intval($row->BekleyenAdet ?? 0);
+                    return $tamamlananAdet > 0 ? $tamamlananAdet : intval($row->Adet ?? 0);
+                }));
+                $detay = $adet . ' adet tamamlandı';
+
+                foreach ($completedRows as $record) {
+                    $tarih = trim((string) ($record->GorevBaslamaTarihi ?? ''));
+                    $gorevAdi = $resolveTaskName($record);
+                    $kisi = trim((string) ($personelIsimleri[$record->PersonelNo] ?? ''));
+                    $tamamlananAdet = intval($record->Adet ?? 0) - intval($record->BekleyenAdet ?? 0);
+                    $kayitAdedi = $tamamlananAdet > 0 ? $tamamlananAdet : intval($record->Adet ?? 0);
+
+                    if ($personelAd === '' && $kisi !== '') {
+                        $personelAd = $kisi;
+                    }
+
+                    $satir = ($tarih !== '' ? $tarih . ': ' : '')
+                        . $gorevAdi
+                        . ' / '
+                        . $kayitAdedi
+                        . ' adet';
+
+                    if ($kisi !== '') {
+                        $satir .= ' (' . $kisi . ')';
+                    }
+
+                    $tooltipLines[] = $satir;
+                }
+            }
+
+            $steps[] = [
+                'bolumNo' => $bolumNo,
+                'bolumAdi' => (string) ($bolum->BolumAdi ?? ''),
+                'status' => $status,
+                'statusLabel' => $statusLabel,
+                'detay' => $detay,
+                'adet' => $adet,
+                'toplamAdet' => $toplamAdet,
+                'personelAd' => $personelAd,
+                'tooltipLines' => $tooltipLines,
+            ];
+        }
+
+        return $steps;
+    }
+
+    private function findActiveOrderRowsForProduct(int $eslesenUrunNo, string $eslesenUrunTur)
+    {
+        if ($eslesenUrunNo <= 0 || trim($eslesenUrunTur) === '') {
+            return collect();
+        }
+
+        return DB::table('tbSiparisSatir')
+            ->where('EslesenUrunNo', $eslesenUrunNo)
+            ->where('EslesenUrunTur', $eslesenUrunTur)
+            ->whereIn('Durum', ['IsEmriVerildi', 'PasifDevamEden'])
+            ->orderByRaw('CASE WHEN IsEmriTarihi IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('IsEmriTarihi')
+            ->orderBy('No')
+            ->get([
+                'No',
+                DB::raw('IFNULL(Adet, 0) as Adet'),
+                'IsEmriTarihi',
+            ]);
+    }
+
+    private function allocateIntegerTotalByOrders($orders, int $total): array
+    {
+        $normalizedOrders = collect($orders)->values()->map(function ($order, $index) {
+            return [
+                'no' => intval(is_array($order) ? ($order['No'] ?? $order['no'] ?? 0) : ($order->No ?? $order->no ?? 0)),
+                'adet' => max(0, intval(is_array($order) ? ($order['Adet'] ?? $order['adet'] ?? 0) : ($order->Adet ?? $order->adet ?? 0))),
+                'sortIndex' => $index,
+            ];
+        })->filter(function ($order) {
+            return $order['no'] > 0;
+        })->values();
+
+        $allocation = $normalizedOrders->mapWithKeys(function ($order) {
+            return [$order['no'] => 0];
+        })->all();
+
+        if ($total <= 0 || $normalizedOrders->isEmpty()) {
+            return $allocation;
+        }
+
+        $weightTotal = intval($normalizedOrders->sum('adet'));
+        if ($weightTotal <= 0) {
+            $weightTotal = $normalizedOrders->count();
+            $normalizedOrders = $normalizedOrders->map(function ($order) {
+                $order['adet'] = 1;
+                return $order;
+            })->values();
+        }
+
+        $distributed = 0;
+        $remainders = [];
+
+        foreach ($normalizedOrders as $order) {
+            $exact = ($total * $order['adet']) / $weightTotal;
+            $base = (int) floor($exact);
+            $allocation[$order['no']] = $base;
+            $distributed += $base;
+            $remainders[] = [
+                'no' => $order['no'],
+                'adet' => $order['adet'],
+                'remainder' => $exact - $base,
+                'sortIndex' => $order['sortIndex'],
+            ];
+        }
+
+        $remaining = $total - $distributed;
+        usort($remainders, function ($left, $right) {
+            if (abs($left['remainder'] - $right['remainder']) > 0.000001) {
+                return $left['remainder'] < $right['remainder'] ? 1 : -1;
+            }
+
+            if ($left['adet'] !== $right['adet']) {
+                return $left['adet'] < $right['adet'] ? 1 : -1;
+            }
+
+            return $left['sortIndex'] <=> $right['sortIndex'];
+        });
+
+        for ($i = 0; $i < $remaining; $i++) {
+            $target = $remainders[$i % count($remainders)]['no'] ?? 0;
+            if ($target > 0) {
+                $allocation[$target] = intval($allocation[$target] ?? 0) + 1;
+            }
+        }
+
+        return $allocation;
+    }
+
+    private function summarizePipelineProgress(array $pipelineSteps): array
+    {
+        $steps = collect($pipelineSteps)->filter(function ($step) {
+            return ($step['status'] ?? 'baslanmadi') !== 'baslanmadi';
+        })->values();
+
+        $biten = $steps->where('status', 'tamamlandi')->count();
+        $aktif = $steps->whereIn('status', ['uretimde', 'bekliyor'])->count();
+        $yuzde = ($biten + $aktif) > 0
+            ? (int) round(($biten * 100) / ($biten + $aktif))
+            : 0;
+
+        $aktifBolumler = $steps->map(function ($step) {
+            $status = (string) ($step['status'] ?? '');
+            if ($status === 'uretimde') {
+                $personelAd = trim((string) ($step['personelAd'] ?? ''));
+                return ($personelAd !== '' ? $personelAd : (string) ($step['bolumAdi'] ?? '')) . ' (Uretimde)';
+            }
+
+            if ($status === 'bekliyor') {
+                return (string) ($step['bolumAdi'] ?? '') . ' (Bekliyor)';
+            }
+
+            return null;
+        })->filter()->implode(', ');
+
+        return [$aktif, $biten, $aktifBolumler, $yuzde];
+    }
+
+    private function buildOrderSpecificPipelineSteps(array $globalSteps, $allocationOrders, int $siparisSatirNo): array
+    {
+        $orders = collect($allocationOrders)->values();
+
+        return collect($globalSteps)->map(function ($step) use ($orders, $siparisSatirNo) {
+            $activeAllocation = $this->allocateIntegerTotalByOrders($orders, intval($step['activeAdet'] ?? 0));
+            $waitingAllocation = $this->allocateIntegerTotalByOrders($orders, intval($step['waitingAdet'] ?? 0));
+            $waitingTotalAllocation = $this->allocateIntegerTotalByOrders($orders, intval($step['waitingToplamAdet'] ?? 0));
+            $completedAllocation = $this->allocateIntegerTotalByOrders($orders, intval($step['completedAdet'] ?? 0));
+
+            $allocatedActive = intval($activeAllocation[$siparisSatirNo] ?? 0);
+            $allocatedWaiting = intval($waitingAllocation[$siparisSatirNo] ?? 0);
+            $allocatedWaitingTotal = intval($waitingTotalAllocation[$siparisSatirNo] ?? 0);
+            $allocatedCompleted = intval($completedAllocation[$siparisSatirNo] ?? 0);
+
+            if ($allocatedWaiting > $allocatedWaitingTotal) {
+                $allocatedWaiting = $allocatedWaitingTotal;
+            }
+
+            $status = 'baslanmadi';
+            $statusLabel = 'Başlanmadı';
+            $detay = '';
+            $personelAd = '';
+            $tooltipLines = [];
+
+            if ($allocatedActive > 0) {
+                $status = 'uretimde';
+                $statusLabel = 'Üretimde';
+                $detay = $allocatedActive . ' adet üretiliyor';
+                [$tooltipLines, $personelAd] = $this->buildAllocatedActiveTooltipLines(
+                    $step['activeRecords'] ?? [],
+                    $orders,
+                    $siparisSatirNo
+                );
+            } elseif ($allocatedWaitingTotal > 0) {
+                $status = 'bekliyor';
+                $statusLabel = 'Bekliyor';
+                $detay = $allocatedWaiting . '/' . $allocatedWaitingTotal . ' adet havuzda';
+                $tooltipLines = $this->buildAllocatedWaitingTooltipLines(
+                    $step['waitingRecords'] ?? [],
+                    $orders,
+                    $siparisSatirNo
+                );
+            } elseif ($allocatedCompleted > 0) {
+                $status = 'tamamlandi';
+                $statusLabel = 'Tamamlandı';
+                $detay = $allocatedCompleted . ' adet tamamlandı';
+                [$tooltipLines, $personelAd] = $this->buildAllocatedCompletedTooltipLines(
+                    $step['completedRecords'] ?? [],
+                    $orders,
+                    $siparisSatirNo
+                );
+            }
+
+            return [
+                'bolumNo' => intval($step['bolumNo'] ?? 0),
+                'bolumAdi' => (string) ($step['bolumAdi'] ?? ''),
+                'status' => $status,
+                'statusLabel' => $statusLabel,
+                'detay' => $detay,
+                'adet' => $status === 'bekliyor' ? $allocatedWaiting : ($status === 'tamamlandi' ? $allocatedCompleted : $allocatedActive),
+                'toplamAdet' => $status === 'bekliyor' ? $allocatedWaitingTotal : 0,
+                'personelAd' => $personelAd,
+                'tooltipLines' => $tooltipLines,
+            ];
+        })->all();
+    }
+
+    private function buildAllocatedActiveTooltipLines(array $records, $orders, int $siparisSatirNo): array
+    {
+        $tooltipLines = [];
+        $personelAd = '';
+
+        foreach ($records as $record) {
+            $allocation = $this->allocateIntegerTotalByOrders($orders, intval($record['adet'] ?? 0));
+            $adet = intval($allocation[$siparisSatirNo] ?? 0);
+            if ($adet <= 0) {
+                continue;
+            }
+
+            $tarih = trim((string) ($record['tarih'] ?? ''));
+            $gorevAdi = trim((string) ($record['gorevAdi'] ?? ''));
+            $kisi = trim((string) ($record['personelAd'] ?? ''));
+
+            if ($personelAd === '' && $kisi !== '') {
+                $personelAd = $kisi;
+            }
+
+            $tooltipLines[] = ($tarih !== '' ? $tarih . ' - ' : '')
+                . ($kisi !== '' ? $kisi : 'Bilinmeyen')
+                . ': '
+                . ($gorevAdi !== '' ? $gorevAdi : 'Gorev')
+                . ' / '
+                . $adet
+                . ' adet';
+        }
+
+        return [$tooltipLines, $personelAd];
+    }
+
+    private function buildAllocatedWaitingTooltipLines(array $records, $orders, int $siparisSatirNo): array
+    {
+        $tooltipLines = [];
+
+        foreach ($records as $record) {
+            $adetAllocation = $this->allocateIntegerTotalByOrders($orders, intval($record['adet'] ?? 0));
+            $toplamAllocation = $this->allocateIntegerTotalByOrders($orders, intval($record['toplamAdet'] ?? 0));
+            $adet = intval($adetAllocation[$siparisSatirNo] ?? 0);
+            $toplamAdet = intval($toplamAllocation[$siparisSatirNo] ?? 0);
+
+            if ($toplamAdet <= 0) {
+                continue;
+            }
+
+            if ($adet > $toplamAdet) {
+                $adet = $toplamAdet;
+            }
+
+            $tarih = trim((string) ($record['tarih'] ?? ''));
+            $gorevAdi = trim((string) ($record['gorevAdi'] ?? ''));
+            $aciklama = trim((string) ($record['aciklama'] ?? ''));
+
+            $satir = ($tarih !== '' ? $tarih . ' - ' : '')
+                . ($gorevAdi !== '' ? $gorevAdi : 'Gorev')
+                . ': '
+                . $adet
+                . '/'
+                . $toplamAdet
+                . ' adet bekliyor';
+
+            if ($aciklama !== '') {
+                $satir .= ' (' . $aciklama . ')';
+            }
+
+            $tooltipLines[] = $satir;
+        }
+
+        return $tooltipLines;
+    }
+
+    private function buildAllocatedCompletedTooltipLines(array $records, $orders, int $siparisSatirNo): array
+    {
+        $tooltipLines = [];
+        $personelAd = '';
+
+        foreach ($records as $record) {
+            $allocation = $this->allocateIntegerTotalByOrders($orders, intval($record['adet'] ?? 0));
+            $adet = intval($allocation[$siparisSatirNo] ?? 0);
+            if ($adet <= 0) {
+                continue;
+            }
+
+            $baslangic = trim((string) ($record['baslangic'] ?? ''));
+            $bitis = trim((string) ($record['bitis'] ?? ''));
+            $gorevAdi = trim((string) ($record['gorevAdi'] ?? ''));
+            $kisi = trim((string) ($record['personelAd'] ?? ''));
+
+            if ($personelAd === '' && $kisi !== '') {
+                $personelAd = $kisi;
+            }
+
+            $satir = '';
+            if ($baslangic !== '' && $bitis !== '') {
+                $satir = $baslangic . ' → ' . $bitis;
+            } elseif ($bitis !== '') {
+                $satir = $bitis;
+            } elseif ($baslangic !== '') {
+                $satir = $baslangic;
+            }
+
+            $satir .= ($satir !== '' ? ': ' : '')
+                . ($gorevAdi !== '' ? $gorevAdi : 'Gorev')
+                . ' / '
+                . $adet
+                . ' adet';
+
+            if ($kisi !== '') {
+                $satir .= ' (' . $kisi . ')';
+            }
+
+            $tooltipLines[] = $satir;
+        }
+
+        return [$tooltipLines, $personelAd];
     }
 
     private function formatLegacyDateTime($value): string
@@ -2287,6 +3568,178 @@ class SiparisApiController extends Controller
             return $diff->h . ' Saat';
         } catch (\Exception $e) {
             return '';
+        }
+    }
+    private function getProductBomComponents(Request $request)
+    {
+        $urunNo = intval($request->query('urunNo') ?? 0);
+        $tur = $request->query('tur') ?? 'Ara'; // Ara or HamMadde
+
+        if ($urunNo <= 0) {
+            return response()->json(['success' => false, 'message' => 'Geçersiz ürün numarası.']);
+        }
+
+        // Check if tbUrunler -> get its UrunID -> find tbAraUrun No
+        // If it's already an AraUrun (for Ara Mamül / Serbest Stok), it might not have an UrunID in tbUrunler.
+        $araUrunAdiNo = null;
+        $uID = DB::table('tbUrunler')->where('No', $urunNo)->value('UrunID');
+        if ($uID) {
+            $araUrunAdiNo = DB::table('tbAraUrun')->where('AraUrunAdi', $uID)->value('No');
+        }
+
+        if (!$araUrunAdiNo) {
+            $araUrunAdiNo = $urunNo; // Already a tbAraUrun No (or fallback)
+        }
+
+        $components = [];
+        $visited = [];
+
+        $this->fetchBomComponentsRecursive($araUrunAdiNo, 1, $components, $visited, $tur);
+
+        // Deduplicate or group
+        $uniqueComps = [];
+        $uniqueSet = [];
+        foreach ($components as $c) {
+            if (!isset($uniqueSet[$c['id']])) {
+                $uniqueSet[$c['id']] = true;
+                $uniqueComps[] = $c;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'components' => array_values($uniqueComps)
+        ]);
+    }
+
+    private function fetchBomComponentsRecursive(int $no, int $level, array &$components, array &$visited, $targetTur)
+    {
+        if (isset($visited[$no])) return;
+        $visited[$no] = true;
+
+        if ($level > 6) return;
+
+        $item = DB::table('tbAraUrun as a')
+            ->leftJoin('tbBolum as b', 'a.BolumAdiNo', '=', 'b.No')
+            ->where('a.No', $no)
+            ->select('a.No', 'a.AraUrunAdi', 'a.UrunCesidi', 'a.Yol', 'b.BolumAdi')
+            ->first();
+
+        if (!$item) return;
+
+        // Skip root component, fetch subcomponents
+        if ($level > 1) {
+            $cesit = trim($item->UrunCesidi);
+            $isValid = false;
+
+            if ($targetTur === 'HamMadde' && stripos((string)$cesit, 'Ham Madde') !== false) {
+                $isValid = true;
+            } elseif ($targetTur === 'Ara' && (stripos((string)$cesit, 'Ara Mamül') !== false || stripos((string)$cesit, 'Bileşen') !== false || empty($cesit))) {
+                if (stripos((string)$cesit, 'Ham Madde') === false) {
+                    $isValid = true;
+                }
+            } else {
+                $isValid = true; // Fallback, send all and let frontend decide if it needs to
+            }
+
+            if ($isValid) {
+                $components[] = [
+                    'id' => $item->No,
+                    'name' => $item->AraUrunAdi,
+                    'type' => $cesit ?: 'Belirsiz',
+                    'department' => $item->BolumAdi ?: '',
+                    'level' => $level - 1,
+                ];
+            }
+        }
+
+        $yol = trim((string)$item->Yol);
+        if ($yol) {
+            $parts = explode(':', $yol);
+            foreach ($parts as $part) {
+                if (!$part) continue;
+                $subNo = intval(explode('-', $part)[0]);
+                if ($subNo > 0) {
+                    $this->fetchBomComponentsRecursive($subNo, $level + 1, $components, $visited, $targetTur);
+                }
+            }
+        }
+    }
+
+    private function createIndependentStockOrder(Request $request)
+    {
+        $payload = json_decode($request->getContent(), true);
+        $urunNo = intval($payload['urunNo'] ?? 0);
+        $adet = intval($payload['adet'] ?? 1);
+        $tur = $payload['tur'] ?? 'Nihai'; // Nihai, Ara, HamMadde
+        $aciklama = $payload['aciklama'] ?? '';
+
+        if ($urunNo <= 0 || $adet <= 0) {
+            return response()->json(['success' => false, 'message' => 'Geçersiz ürün veya adet.']);
+        }
+
+        $ara = DB::table('tbAraUrun')->where('No', $urunNo)->first();
+        if (!$ara) {
+            return response()->json(['success' => false, 'message' => 'Ürün bulunamadı.']);
+        }
+
+        $urunAdi = $ara->AraUrunAdi;
+
+        $eslesenUrunTur = 'Nihai';
+        $eslesenUrunNo = $urunNo;
+
+        if ($tur === 'Nihai') {
+            $u = DB::table('tbUrunler')->where('SistemAdi', $urunAdi)->orWhere('UrunID', $urunAdi)->first();
+            if ($u) {
+                $eslesenUrunNo = $u->No;
+                $eslesenUrunTur = 'Nihai';
+            } else {
+                 return response()->json(['success' => false, 'message' => 'Bu ürün "Nihai Ürün" olarak tanımlı değil. Lütfen Ara Mamül veya Ham Madde seçin veya ürünü tbUrunler tablosuna ekleyin.']);
+            }
+        } else {
+            $eslesenUrunTur = $tur; // Ara veya HamMadde
+            $eslesenUrunNo = $urunNo;
+        }
+
+        DB::beginTransaction();
+        try {
+            $satirNo = DB::table('tbSiparisSatir')->insertGetId([
+                'SiparisNo' => 'STOK-' . date('Ymd') . '-' . rand(1000, 9999),
+                'Musteri' => 'ÖZEL ÜRETİM (SERBEST)',
+                'UrunAdi' => $urunAdi,
+                'Adet' => $adet,
+                'Durum' => 'UretimBekliyor',
+                'Aktif' => 1,
+                'Kategori' => 'Özel Üretim',
+                'Pazaryeri' => 'Stok',
+                'Magaza' => 'Zem',
+                'SiparisTarihi' => now(),
+                'YuklemeTarihi' => now(),
+                'EslesenUrunNo' => $eslesenUrunNo,
+                'EslesenUrunTur' => $eslesenUrunTur,
+                'EslesmePuani' => 100,
+                'EslesmeYontemi' => 'Manuel',
+                'MusteriNotu' => $aciklama ?: 'Serbest Stok Üretimi',
+                'SetMi' => 0,
+            ], 'No');
+
+            $result = $this->orderToWorkOrder->createOrderWorkOrders([$satirNo], 0, $tur);
+
+            if (!$result['success']) {
+                DB::rollBack();
+                return response()->json($result);
+            }
+
+            DB::commit();
+            return response()->json([
+                'success' => true,
+                'message' => 'Serbest stok üretimi iş emri başarıyla oluşturuldu.',
+                'created' => $result['created'] ?? 1
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => $e->getMessage()]);
         }
     }
 }
