@@ -135,9 +135,68 @@
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
-        margin-bottom: 18px;
+        margin-bottom: 10px;
         color: var(--z-text-secondary);
         font-size: 0.84rem;
+    }
+
+    /* ───── Özellik #9: Personel İş Yükü Özet Çubuğu ───── */
+    .planning-workload-bar {
+        display: none;
+        align-items: stretch;
+        gap: 0;
+        margin-bottom: 18px;
+        border: 1px solid var(--z-border-light);
+        border-radius: 10px;
+        background: var(--z-bg-soft);
+        overflow: hidden;
+    }
+    .planning-workload-bar.is-visible { display: flex; }
+
+    .planning-workload-stat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 8px;
+        border-right: 1px solid var(--z-border-light);
+        gap: 2px;
+    }
+    .planning-workload-stat:last-child { border-right: none; }
+    .planning-workload-stat .wl-value {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: var(--z-text);
+        line-height: 1.2;
+    }
+    .planning-workload-stat .wl-label {
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: var(--z-text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .planning-workload-stat .wl-value.is-ready { color: #059669; }
+    .planning-workload-stat .wl-value.is-waiting { color: #dc2626; }
+    .planning-workload-stat .wl-value.is-overdue { color: #b91c1c; }
+
+    .planning-workload-progress {
+        width: 100%;
+        padding: 0 14px 10px;
+    }
+    .planning-workload-track {
+        width: 100%;
+        height: 7px;
+        border-radius: 4px;
+        background: #e5e7eb;
+        overflow: hidden;
+    }
+    .planning-workload-fill {
+        height: 100%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #059669, #10b981);
+        transition: width 0.5s ease;
     }
 
     .planning-chip {
@@ -172,6 +231,52 @@
     .planning-date-column.is-drop-target {
         border-color: var(--z-accent);
         box-shadow: 0 0 0 3px var(--z-accent-soft);
+    }
+
+    /* ───── Özellik #5: Bugün / Gecikme Vurgusu ───── */
+    .planning-date-column.is-today {
+        border: 2px solid #3b82f6;
+        background: rgba(59, 130, 246, 0.03);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+    }
+    .planning-date-column.is-today .planning-date-label {
+        color: #1d4ed8;
+        border-bottom-color: #93c5fd;
+    }
+    .planning-date-column.is-overdue {
+        border-color: #fca5a5;
+        background: rgba(239, 68, 68, 0.02);
+    }
+    .planning-date-column.is-overdue .planning-date-label {
+        color: #b91c1c;
+    }
+    .planning-date-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+    .planning-date-badge.is-today {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+    .planning-date-badge.is-overdue {
+        background: #fee2e2;
+        color: #b91c1c;
+        animation: pulse-soft 2s ease-in-out infinite;
+    }
+    .planning-date-badge.is-future {
+        background: #f0fdf4;
+        color: #059669;
+    }
+    @keyframes pulse-soft {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
     }
 
     .planning-date-header {
@@ -662,6 +767,35 @@
                     <span class="planning-chip"><i class="bi bi-person"></i><span id="planningSelectedPersonnel">Personel seçilmedi</span></span>
                     <span class="planning-chip"><i class="bi bi-list-task"></i><span id="taskCount">0 görev</span></span>
                     <span class="planning-chip"><i class="bi bi-clock"></i><span id="planningUpdatedMeta">Bekleniyor</span></span>
+                    <span class="planning-chip" id="autoRefreshChip" style="display:none" title="Otomatik yenileme aktif"><i class="bi bi-arrow-repeat"></i><span id="autoRefreshLabel">Otomatik</span></span>
+                </div>
+
+                <div class="planning-workload-bar" id="workloadBar">
+                    <div class="planning-workload-stat">
+                        <span class="wl-value" id="wlTaskCount">0</span>
+                        <span class="wl-label">Görev</span>
+                    </div>
+                    <div class="planning-workload-stat">
+                        <span class="wl-value" id="wlTotalQty">0</span>
+                        <span class="wl-label">Toplam Adet</span>
+                    </div>
+                    <div class="planning-workload-stat">
+                        <span class="wl-value is-ready" id="wlReadyQty">0</span>
+                        <span class="wl-label">✅ Hazır</span>
+                    </div>
+                    <div class="planning-workload-stat">
+                        <span class="wl-value is-waiting" id="wlWaitingQty">0</span>
+                        <span class="wl-label">⏳ Bekleyen</span>
+                    </div>
+                    <div class="planning-workload-stat">
+                        <span class="wl-value is-overdue" id="wlOverdueCount">0</span>
+                        <span class="wl-label">⚠️ Gecikmiş</span>
+                    </div>
+                </div>
+                <div class="planning-workload-progress" id="workloadProgressWrap" style="display:none">
+                    <div class="planning-workload-track">
+                        <div class="planning-workload-fill" id="workloadFill" style="width:0%"></div>
+                    </div>
                 </div>
 
                 <div id="personelTasksArea" class="planning-board">
@@ -767,6 +901,8 @@ function csrfHeaders(extra = {}) {
 function setPlanningStamp(text) {
     const label = text || new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     document.getElementById('planningUpdatedMeta').textContent = label;
+    // Özellik #8: Auto-refresh sayacını sıfırla
+    if (typeof markRefreshTimestamp === 'function') markRefreshTimestamp();
 }
 
 function setPlanningStatus(label, tone = '') {
@@ -891,6 +1027,7 @@ function renderEmptyPersonnelState() {
             <strong>Personel Seçin</strong>
         </div>
     `;
+    if (typeof updateWorkloadBar === 'function') updateWorkloadBar([], 0);
 }
 
 function renderTaskBoard(tasks) {
@@ -924,6 +1061,7 @@ function renderTaskBoard(tasks) {
                 <strong>Bu personele atanmış görev yok.</strong>
             </div>
         `;
+        updateWorkloadBar([], 0);
         return;
     }
 
@@ -934,6 +1072,31 @@ function renderTaskBoard(tasks) {
 
     area.innerHTML = html;
     bindPlanningDragDrop();
+
+    // Özellik #9: İş yükü bar güncelleme
+    const todayISO = todayISODate();
+    let overdueCount = 0;
+    groups.forEach((group) => {
+        if (group.info.iso && group.info.iso < todayISO && group.tasks.length > 0) {
+            overdueCount += group.tasks.length;
+        }
+    });
+    updateWorkloadBar(tasks, overdueCount);
+}
+
+function todayISODate() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function dateDiffDays(isoDate) {
+    if (!isoDate) return null;
+    const today = new Date(todayISODate());
+    const target = new Date(isoDate);
+    return Math.round((target - today) / 86400000);
 }
 
 function renderDateColumn(group) {
@@ -946,10 +1109,29 @@ function renderDateColumn(group) {
         ? group.tasks.map(renderTaskCard).join('')
         : '<div class="planning-date-empty">Boş</div>';
 
+    // Özellik #5: Bugün/gecikme hesaplama
+    const diff = dateDiffDays(group.info.iso);
+    let columnClass = '';
+    let dateBadge = '';
+
+    if (diff === 0) {
+        columnClass = 'is-today';
+        dateBadge = '<span class="planning-date-badge is-today"><i class="bi bi-star-fill"></i> BUGÜN</span>';
+    } else if (diff !== null && diff < 0) {
+        const absDiff = Math.abs(diff);
+        columnClass = 'is-overdue';
+        dateBadge = `<span class="planning-date-badge is-overdue"><i class="bi bi-exclamation-triangle-fill"></i> ${absDiff} gün gecikmiş</span>`;
+    } else if (diff === 1) {
+        dateBadge = '<span class="planning-date-badge is-future">Yarın</span>';
+    } else if (diff !== null && diff > 1 && diff <= 7) {
+        dateBadge = `<span class="planning-date-badge is-future">${diff} gün sonra</span>`;
+    }
+
     return `
-        <article class="planning-date-column" data-date-key="${escapeHtml(group.info.key)}" data-iso-date="${escapeHtml(group.info.iso)}">
+        <article class="planning-date-column ${columnClass}" data-date-key="${escapeHtml(group.info.key)}" data-iso-date="${escapeHtml(group.info.iso)}">
             <div class="planning-date-header">
                 <div class="planning-date-label">${escapeHtml(group.info.label)}</div>
+                ${dateBadge}
                 <div class="planning-date-stats">
                     <span class="planning-chip">${formatNumber(group.tasks.length)} görev</span>
                     <span class="planning-chip">${formatNumber(totalAmount)} adet</span>
@@ -959,6 +1141,38 @@ function renderDateColumn(group) {
         </article>
     `;
 }
+
+function updateWorkloadBar(tasks, overdueCount) {
+    const bar = document.getElementById('workloadBar');
+    const progressWrap = document.getElementById('workloadProgressWrap');
+
+    if (!tasks.length) {
+        bar.classList.remove('is-visible');
+        progressWrap.style.display = 'none';
+        return;
+    }
+
+    let totalReady = 0, totalWaiting = 0;
+    tasks.forEach((t) => {
+        totalReady += Math.max(0, parseInt(t.Adet, 10) || 0);
+        totalWaiting += Math.max(0, parseInt(t.BekleyenAdet, 10) || 0);
+    });
+    const total = totalReady + totalWaiting;
+    const pct = total > 0 ? Math.round((totalReady / total) * 100) : 0;
+
+    document.getElementById('wlTaskCount').textContent = formatNumber(tasks.length);
+    document.getElementById('wlTotalQty').textContent = formatNumber(total);
+    document.getElementById('wlReadyQty').textContent = formatNumber(totalReady);
+    document.getElementById('wlWaitingQty').textContent = formatNumber(totalWaiting);
+    document.getElementById('wlOverdueCount').textContent = formatNumber(overdueCount);
+    document.getElementById('workloadFill').style.width = `${pct}%`;
+
+    bar.classList.add('is-visible');
+    progressWrap.style.display = '';
+}
+}
+
+
 
 function renderTaskCard(task) {
     const id = Number(task.No || 0);
@@ -1837,8 +2051,111 @@ function escapeJsString(value) {
         .replace(/\n/g, ' ');
 }
 
+/* ───── Özellik #8: Otomatik Yenileme (30sn) ───── */
+let autoRefreshInterval = null;
+let lastRefreshTimestamp = Date.now();
+let refreshCounterInterval = null;
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+
+    autoRefreshInterval = setInterval(() => {
+        // Duraklatma koşulları
+        if (!currentPersonelNo) return;
+        if (currentPlanningView !== 'personnel') return;
+        if (document.querySelector('.swal2-container')) return;
+        if (document.querySelector('.modal.show')) return;
+        if (document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+        loadPersonelTasks();
+    }, 30000);
+
+    refreshCounterInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - lastRefreshTimestamp) / 1000);
+        const label = document.getElementById('autoRefreshLabel');
+        if (!label) return;
+
+        if (elapsed < 3) label.textContent = 'Az önce';
+        else if (elapsed < 60) label.textContent = `${elapsed} sn önce`;
+        else label.textContent = `${Math.floor(elapsed / 60)} dk önce`;
+    }, 1000);
+
+    const chip = document.getElementById('autoRefreshChip');
+    if (chip) chip.style.display = '';
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) { clearInterval(autoRefreshInterval); autoRefreshInterval = null; }
+    if (refreshCounterInterval) { clearInterval(refreshCounterInterval); refreshCounterInterval = null; }
+    const chip = document.getElementById('autoRefreshChip');
+    if (chip) chip.style.display = 'none';
+}
+
+function markRefreshTimestamp() {
+    lastRefreshTimestamp = Date.now();
+    const label = document.getElementById('autoRefreshLabel');
+    if (label) label.textContent = 'Az önce';
+}
+
+
+
+/* ───── Özellik #10: Klavye Kısayolları ───── */
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Input/select alanında iken kısayolları devre dışı bırak
+        const tag = (e.target.tagName || '').toUpperCase();
+        if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+        // SweetAlert açıkken devre dışı bırak
+        if (document.querySelector('.swal2-container')) return;
+
+        switch (e.key) {
+            case 'r':
+            case 'R':
+                e.preventDefault();
+                loadCurrentPlanningTab();
+                break;
+
+            case '/':
+                e.preventDefault();
+                document.getElementById('personelSelect')?.focus();
+                break;
+
+            case 'n':
+            case 'N':
+                e.preventDefault();
+                tarihKutusuEkle();
+                break;
+
+            case 'ArrowLeft':
+                e.preventDefault();
+                navigatePersonnel(-1);
+                break;
+
+            case 'ArrowRight':
+                e.preventDefault();
+                navigatePersonnel(1);
+                break;
+        }
+    });
+}
+
+function navigatePersonnel(direction) {
+    const select = document.getElementById('personelSelect');
+    if (!select || select.options.length < 2) return;
+
+    let idx = select.selectedIndex + direction;
+    // İlk option "Personel Seçin" placeholder'ı, atla
+    if (idx < 1) idx = select.options.length - 1;
+    if (idx >= select.options.length) idx = 1;
+
+    select.selectedIndex = idx;
+    handlePersonnelChange();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     loadPersonelList();
+    startAutoRefresh();
+    initKeyboardShortcuts();
 });
 </script>
 @endpush
