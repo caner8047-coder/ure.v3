@@ -627,17 +627,174 @@ class ProductionPlanningController extends Controller
     }
 
     /**
-     * Personel listesini getirir.
+     * Personel listesini getirir (bölüm ve aktif görev sayısı ile).
      */
     public function getPersonnelList()
     {
-        $personnel = DB::table('tbPersonel')
-            ->where('BolumAdiNo', '!=', 0)
-            ->select('PersonelNo', DB::raw("CONCAT(Ad, ' ', Soyad) as PersonelAdi"))
-            ->orderBy('Ad')
+        $nameSql = DB::connection()->getDriverName() === 'sqlite'
+            ? "TRIM(IFNULL(p.Ad, '') || ' ' || IFNULL(p.Soyad, '')) as PersonelAdi"
+            : "TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as PersonelAdi";
+
+        $personnel = DB::table('tbPersonel as p')
+            ->leftJoin('tbBolum as b', 'p.BolumAdiNo', '=', 'b.No')
+            ->leftJoin(DB::raw('(SELECT PersonelNo, COUNT(*) as gorev_sayisi FROM tbPersonelGorev WHERE (Adet > 0 OR BekleyenAdet > 0) GROUP BY PersonelNo) as gs'), 'p.PersonelNo', '=', 'gs.PersonelNo')
+            ->where('p.BolumAdiNo', '!=', 0)
+            ->select(
+                'p.PersonelNo',
+                DB::raw($nameSql),
+                DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+                DB::raw("IFNULL(gs.gorev_sayisi, 0) as aktif_gorev_sayisi")
+            )
+            ->orderBy('p.Ad')
             ->get();
 
         return response()->json(['success' => true, 'data' => $personnel]);
+    }
+
+    /**
+     * Görev adetini doğrudan hedef değere ayarlar (toplu adet girişi).
+     */
+    public function setTaskQuantity(Request $request, $taskId)
+    {
+        $targetQuantity = intval($request->input('target_quantity', -1));
+        if ($targetQuantity < 0) {
+            return response()->json(['success' => false, 'message' => 'Geçerli bir adet girin.'], 422);
+        }
+
+        return DB::transaction(function () use ($taskId, $targetQuantity) {
+            $task = DB::table('tbPersonelGorev')
+                ->where('No', $taskId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$task) {
+                return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+            }
+
+            if ($this->isApprovedValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Tamamlanmış görev değiştirilemez.'], 422);
+            }
+
+            $bomService = app(BomService::class);
+            $traceContext = $bomService->traceContextFromRecord($task);
+            $araUrunAdiNo = intval($task->AraUrunAdiNo ?? 0);
+            $bolumAdiNo = intval($task->BolumAdiNo ?? 0);
+
+            $currentReady = max(0, intval($task->Adet ?? 0));
+            $currentWaiting = max(0, intval($task->BekleyenAdet ?? 0));
+            $currentTotal = $currentReady + $currentWaiting;
+            $diff = $targetQuantity - $currentTotal;
+
+            if ($diff === 0) {
+                return response()->json(['success' => true, 'message' => 'Adet zaten bu değerde.']);
+            }
+
+            if ($diff > 0) {
+                // Artırma — havuzdan çek
+                $poolQuery = DB::table('tbBolumHavuz')
+                    ->where('AraUrunAdiNo', $araUrunAdiNo)
+                    ->where('BolumAdiNo', $bolumAdiNo)
+                    ->where('Adet', '>', 0)
+                    ->orderBy('No');
+                $bomService->scopeQueryToTrace($poolQuery, $traceContext, true);
+                $pool = $poolQuery->lockForUpdate()->first();
+
+                if (!$pool) {
+                    return response()->json(['success' => false, 'message' => 'Havuzda yeterli adet yok.']);
+                }
+
+                $poolAdet = max(0, intval($pool->Adet ?? 0));
+                $poolToplam = max(0, intval($pool->ToplamAdet ?? 0));
+                $canTake = min($diff, $poolAdet);
+
+                if ($canTake < $diff) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Havuzda sadece {$canTake} adet mevcut (talep: {$diff}).",
+                    ]);
+                }
+
+                $newPoolToplam = $poolToplam - $diff;
+                $newPoolAdet = max(0, $poolAdet - $diff);
+
+                if ($newPoolToplam <= 0) {
+                    DB::table('tbBolumHavuz')->where('No', $pool->No)->delete();
+                } else {
+                    DB::table('tbBolumHavuz')->where('No', $pool->No)->update([
+                        'ToplamAdet' => $newPoolToplam,
+                        'Adet' => $newPoolAdet,
+                    ]);
+                }
+            } else {
+                // Azaltma — havuza iade
+                $returnCount = abs($diff);
+                if ($returnCount > $currentTotal) {
+                    $returnCount = $currentTotal;
+                }
+
+                $poolQuery = DB::table('tbBolumHavuz')
+                    ->where('AraUrunAdiNo', $araUrunAdiNo)
+                    ->where('BolumAdiNo', $bolumAdiNo)
+                    ->orderBy('No');
+                $bomService->scopeQueryToTrace($poolQuery, $traceContext, true);
+                $existingPool = $poolQuery->lockForUpdate()->first();
+
+                if ($existingPool) {
+                    DB::table('tbBolumHavuz')->where('No', $existingPool->No)->update([
+                        'ToplamAdet' => intval($existingPool->ToplamAdet ?? 0) + $returnCount,
+                        'Adet' => intval($existingPool->Adet ?? 0) + $returnCount,
+                    ]);
+                } else {
+                    $insertData = [
+                        'AraUrunAdiNo' => $araUrunAdiNo,
+                        'BolumAdiNo' => $bolumAdiNo,
+                        'ToplamAdet' => $returnCount,
+                        'Adet' => $returnCount,
+                    ];
+
+                    if (Schema::hasColumn('tbBolumHavuz', 'SiparisSatirNo') && isset($task->SiparisSatirNo)) {
+                        $insertData['SiparisSatirNo'] = intval($task->SiparisSatirNo ?? 0);
+                    }
+                    if (Schema::hasColumn('tbBolumHavuz', 'SiparisNo') && isset($task->SiparisNo)) {
+                        $insertData['SiparisNo'] = $task->SiparisNo;
+                    }
+
+                    DB::table('tbBolumHavuz')->insert($insertData);
+                }
+            }
+
+            // Görev adetini güncelle
+            $split = $bomService->personnelTaskReadySplit($task, max(0, $targetQuantity));
+            $newReady = intval($split['ready']);
+            $newWaiting = intval($split['waiting']);
+
+            if ($targetQuantity <= 0) {
+                DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
+            } else {
+                DB::table('tbPersonelGorev')->where('No', $taskId)->update([
+                    'Adet' => $newReady,
+                    'BekleyenAdet' => $newWaiting,
+                    'Onay' => null,
+                ]);
+            }
+
+            $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
+
+            $updatedTask = DB::table('tbPersonelGorev')->where('No', $taskId)->first();
+            $this->logPlanningEvent('planning_quantity_set', $task, $updatedTask, [
+                'next_step_human' => 'Adet degistirildi; uretimdeki gorev guncellenmeli.',
+                'context' => [
+                    'previous_total' => $currentTotal,
+                    'new_total' => $targetQuantity,
+                    'diff' => $diff,
+                ],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Adet {$currentTotal} → {$targetQuantity} olarak güncellendi.",
+            ]);
+        });
     }
 
     /**

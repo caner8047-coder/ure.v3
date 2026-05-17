@@ -95,6 +95,105 @@
         font-size: 1rem;
     }
 
+    /* ───── Özellik #2: Aranabilir Personel Dropdown ───── */
+    .pss-wrap { position: relative; min-width: 0; }
+    .pss-display {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 46px;
+        padding: 8px 14px;
+        border: 1.5px solid var(--z-border-light);
+        border-radius: 8px;
+        background: var(--z-bg);
+        cursor: pointer;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        font-size: 0.95rem;
+    }
+    .pss-display:hover, .pss-display:focus { border-color: var(--z-accent); }
+    .pss-display.is-open { border-color: var(--z-accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); border-radius: 8px 8px 0 0; }
+    .pss-icon { color: var(--z-text-secondary); font-size: 1.1rem; flex-shrink: 0; }
+    .pss-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--z-text); font-weight: 600; }
+    .pss-text.is-placeholder { color: var(--z-text-secondary); font-weight: 500; }
+    .pss-badge { font-size: 0.65rem; padding: 2px 7px; border-radius: 10px; background: var(--z-accent); color: #fff; font-weight: 700; flex-shrink: 0; }
+    .pss-arrow { color: var(--z-text-secondary); font-size: 0.8rem; flex-shrink: 0; transition: transform 0.2s; }
+    .pss-display.is-open .pss-arrow { transform: rotate(180deg); }
+    .pss-dropdown {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0; right: 0;
+        z-index: 100;
+        background: var(--z-bg);
+        border: 1.5px solid var(--z-accent);
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+        max-height: 320px;
+        overflow: hidden;
+        display: none;
+        flex-direction: column;
+    }
+    .pss-dropdown.is-open { display: flex; }
+    .pss-search-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--z-border-light);
+    }
+    .pss-search-wrap i { color: var(--z-text-secondary); font-size: 0.9rem; }
+    .pss-search {
+        flex: 1;
+        border: none;
+        background: transparent;
+        font-size: 0.88rem;
+        color: var(--z-text);
+        outline: none;
+    }
+    .pss-list { overflow-y: auto; max-height: 260px; }
+    .pss-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        cursor: pointer;
+        transition: background 0.1s;
+        border-bottom: 1px solid rgba(0,0,0,0.03);
+    }
+    .pss-item:hover, .pss-item.is-focused { background: rgba(99,102,241,0.06); }
+    .pss-item.is-selected { background: rgba(99,102,241,0.1); font-weight: 700; }
+    .pss-item-name { flex: 1; font-size: 0.88rem; color: var(--z-text); font-weight: 600; }
+    .pss-item-dept { font-size: 0.7rem; color: var(--z-text-secondary); background: var(--z-bg-soft); padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+    .pss-item-tasks { font-size: 0.68rem; color: var(--z-accent); font-weight: 700; white-space: nowrap; }
+    .pss-empty { padding: 16px; text-align: center; color: var(--z-text-secondary); font-size: 0.85rem; }
+
+    /* ───── Özellik #1: Inline Adet Düzenleme ───── */
+    .planning-qty-editable {
+        cursor: pointer;
+        padding: 1px 4px;
+        border-radius: 4px;
+        transition: background 0.15s;
+        display: inline;
+    }
+    .planning-qty-editable:hover {
+        background: rgba(99,102,241,0.1);
+        text-decoration: underline dotted;
+    }
+    .planning-qty-input {
+        width: 60px;
+        padding: 2px 6px;
+        border: 1.5px solid var(--z-accent);
+        border-radius: 4px;
+        font-size: 0.95rem;
+        font-weight: 800;
+        text-align: center;
+        background: #fff;
+        color: var(--z-text);
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+    }
+
     .planning-view-switch {
         display: flex;
         flex-wrap: wrap;
@@ -735,10 +834,24 @@
             </div>
 
             <div class="planning-controls">
-                <label class="visually-hidden" for="personelSelect">Personel seçin</label>
-                <select id="personelSelect" class="form-select" onchange="handlePersonnelChange()">
+                <select id="personelSelect" class="form-select" onchange="handlePersonnelChange()" style="display:none">
                     <option value="">Personel Seçin</option>
                 </select>
+                <div class="pss-wrap" id="pssWrap">
+                    <div class="pss-display" id="pssDisplay" tabindex="0">
+                        <i class="bi bi-person pss-icon"></i>
+                        <span class="pss-text" id="pssText">Personel Seçin</span>
+                        <span class="pss-badge" id="pssBadge" style="display:none"></span>
+                        <i class="bi bi-chevron-down pss-arrow"></i>
+                    </div>
+                    <div class="pss-dropdown" id="pssDropdown">
+                        <div class="pss-search-wrap">
+                            <i class="bi bi-search"></i>
+                            <input type="text" class="pss-search" id="pssSearch" placeholder="Personel ara..." autocomplete="off">
+                        </div>
+                        <div class="pss-list" id="pssList"></div>
+                    </div>
+                </div>
 
                 <label class="visually-hidden" for="yeniTarih">Yeni tarih</label>
                 <input type="date" id="yeniTarih" class="form-control" value="{{ date('Y-m-d') }}">
@@ -925,6 +1038,8 @@ function showPlanningView(view) {
     }
 }
 
+let personnelData = []; // Özellik #2: tam personel verisi
+
 function loadPersonelList() {
     setPlanningStatus('Yükleniyor', 'warning');
 
@@ -936,17 +1051,23 @@ function loadPersonelList() {
                 return;
             }
 
+            personnelData = data.data || [];
             const select = document.getElementById('personelSelect');
             const fromQuery = new URLSearchParams(window.location.search).get('personel_no');
             const current = select.value || fromQuery || '';
 
+            // Hidden select güncelle (uyumluluk)
             select.innerHTML = '<option value="">Personel Seçin</option>';
-            (data.data || []).forEach((personnel) => {
-                select.innerHTML += `<option value="${escapeHtml(personnel.PersonelNo)}">${escapeHtml(personnel.PersonelAdi)}</option>`;
+            personnelData.forEach((p) => {
+                select.innerHTML += `<option value="${escapeHtml(p.PersonelNo)}">${escapeHtml(p.PersonelAdi)}</option>`;
             });
+
+            // Custom dropdown güncelle
+            pssRenderList(personnelData);
 
             if (current) {
                 select.value = current;
+                pssSetSelected(current);
             }
 
             if (select.value) {
@@ -961,6 +1082,154 @@ function loadPersonelList() {
             setPlanningStatus('Hata', 'danger');
             Swal.fire('Hata', 'Personel listesi yüklenemedi.', 'error');
         });
+}
+
+/* ───── Özellik #2: Aranabilir Dropdown Motoru ───── */
+function pssInit() {
+    const display = document.getElementById('pssDisplay');
+    const dropdown = document.getElementById('pssDropdown');
+    const search = document.getElementById('pssSearch');
+
+    display.addEventListener('click', () => {
+        const isOpen = dropdown.classList.contains('is-open');
+        if (isOpen) {
+            pssClose();
+        } else {
+            pssOpen();
+        }
+    });
+
+    search.addEventListener('input', () => {
+        const q = search.value.toLowerCase().trim();
+        pssFilterList(q);
+    });
+
+    search.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { pssClose(); return; }
+        if (e.key === 'Enter') {
+            const focused = document.querySelector('.pss-item.is-focused');
+            if (focused) focused.click();
+            return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            pssMoveFocus(e.key === 'ArrowDown' ? 1 : -1);
+        }
+    });
+
+    // Dışına tıklayınca kapat
+    document.addEventListener('click', (e) => {
+        if (!document.getElementById('pssWrap')?.contains(e.target)) {
+            pssClose();
+        }
+    });
+}
+
+function pssOpen() {
+    document.getElementById('pssDisplay').classList.add('is-open');
+    document.getElementById('pssDropdown').classList.add('is-open');
+    const search = document.getElementById('pssSearch');
+    search.value = '';
+    pssFilterList('');
+    setTimeout(() => search.focus(), 50);
+}
+
+function pssClose() {
+    document.getElementById('pssDisplay').classList.remove('is-open');
+    document.getElementById('pssDropdown').classList.remove('is-open');
+}
+
+function pssRenderList(list) {
+    const container = document.getElementById('pssList');
+    if (!list.length) {
+        container.innerHTML = '<div class="pss-empty">Personel bulunamadı</div>';
+        return;
+    }
+
+    container.innerHTML = list.map((p) => {
+        const no = String(p.PersonelNo || '');
+        const name = escapeHtml(p.PersonelAdi || '');
+        const dept = escapeHtml(p.BolumAdi || '');
+        const tasks = parseInt(p.aktif_gorev_sayisi, 10) || 0;
+        const isSelected = no === String(currentPersonelNo || '');
+        return `<div class="pss-item ${isSelected ? 'is-selected' : ''}" data-pno="${escapeHtml(no)}" onclick="pssSelect('${escapeHtml(no)}')">
+            <span class="pss-item-name">${name}</span>
+            ${dept ? `<span class="pss-item-dept">${dept}</span>` : ''}
+            ${tasks > 0 ? `<span class="pss-item-tasks">${tasks} görev</span>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function pssFilterList(query) {
+    const container = document.getElementById('pssList');
+    const items = container.querySelectorAll('.pss-item');
+    let visibleCount = 0;
+
+    items.forEach((item) => {
+        const text = item.textContent.toLowerCase();
+        const match = !query || text.includes(query);
+        item.style.display = match ? '' : 'none';
+        item.classList.remove('is-focused');
+        if (match) visibleCount++;
+    });
+
+    // İlk görünene focus ver
+    const firstVisible = container.querySelector('.pss-item[style=""], .pss-item:not([style])');
+    if (firstVisible && query) firstVisible.classList.add('is-focused');
+
+    const empty = container.querySelector('.pss-empty');
+    if (visibleCount === 0 && !empty) {
+        container.insertAdjacentHTML('beforeend', '<div class="pss-empty pss-empty-temp">Sonuç bulunamadı</div>');
+    } else {
+        container.querySelector('.pss-empty-temp')?.remove();
+    }
+}
+
+function pssMoveFocus(dir) {
+    const items = Array.from(document.querySelectorAll('.pss-item')).filter(el => el.style.display !== 'none');
+    if (!items.length) return;
+    const focusedIdx = items.findIndex(el => el.classList.contains('is-focused'));
+    items.forEach(el => el.classList.remove('is-focused'));
+    let nextIdx = focusedIdx + dir;
+    if (nextIdx < 0) nextIdx = items.length - 1;
+    if (nextIdx >= items.length) nextIdx = 0;
+    items[nextIdx].classList.add('is-focused');
+    items[nextIdx].scrollIntoView({ block: 'nearest' });
+}
+
+function pssSelect(personnelNo) {
+    const select = document.getElementById('personelSelect');
+    select.value = personnelNo;
+    pssSetSelected(personnelNo);
+    pssClose();
+    handlePersonnelChange();
+}
+
+function pssSetSelected(personnelNo) {
+    const p = personnelData.find(x => String(x.PersonelNo) === String(personnelNo));
+    const textEl = document.getElementById('pssText');
+    const badgeEl = document.getElementById('pssBadge');
+
+    if (p) {
+        textEl.textContent = p.PersonelAdi || 'Personel';
+        textEl.classList.remove('is-placeholder');
+        const tasks = parseInt(p.aktif_gorev_sayisi, 10) || 0;
+        if (tasks > 0) {
+            badgeEl.textContent = `${tasks} görev`;
+            badgeEl.style.display = '';
+        } else {
+            badgeEl.style.display = 'none';
+        }
+    } else {
+        textEl.textContent = 'Personel Seçin';
+        textEl.classList.add('is-placeholder');
+        badgeEl.style.display = 'none';
+    }
+
+    // Seçili öğeyi işaretle
+    document.querySelectorAll('.pss-item').forEach((el) => {
+        el.classList.toggle('is-selected', el.dataset.pno === String(personnelNo));
+    });
 }
 
 function handlePersonnelChange() {
@@ -1188,11 +1457,13 @@ function renderTaskCard(task) {
             </button>`
         : '';
 
+    const totalQty = amount + pending;
+
     return `
         <div class="planning-task-card ${state.className}" id="task-${id}" data-task-id="${id}" draggable="true">
             <div class="planning-task-copy">
                 <strong>Ara Ürün:</strong> ${escapeHtml(task.AraUrunAdi || 'Bilinmiyor')}<br>
-                <strong>Adet:</strong> ${formatNumber(amount)}
+                <strong>Adet:</strong> <span class="planning-qty-editable" onclick="startQtyEdit(${id}, ${totalQty})" title="Tıkla ve yeni adet gir">${formatNumber(amount)}</span>
                 <strong>Bekleyen:</strong> ${formatNumber(pending)}
             </div>
             <div class="planning-task-status">
@@ -1203,11 +1474,8 @@ function renderTaskCard(task) {
                 <button class="planning-icon-btn is-transfer" type="button" onclick="openTransferModal(${id})" title="Başka personele aktar">
                     <i class="bi bi-person-up"></i>
                 </button>
-                <button class="planning-icon-btn" type="button" onclick="incrementTask(${id})" title="Adet +1" ${canIncrease ? '' : 'disabled'}>
-                    <i class="bi bi-chevron-up"></i>
-                </button>
-                <button class="planning-icon-btn" type="button" onclick="decrementTask(${id})" title="Adet -1" ${canDecrease ? '' : 'disabled'}>
-                    <i class="bi bi-chevron-down"></i>
+                <button class="planning-icon-btn" type="button" onclick="startQtyEdit(${id}, ${totalQty})" title="Adet değiştir">
+                    <i class="bi bi-hash"></i>
                 </button>
                 <button class="planning-icon-btn" type="button" onclick="openDateModal(${id})" title="Tarih değiştir">
                     <i class="bi bi-calendar-event"></i>
@@ -1753,6 +2021,86 @@ function executeReturnToPoolFromModal(taskId) {
         .catch((error) => Swal.fire('Hata', String(error), 'error'));
 }
 
+/* ───── Özellik #1: Toplu Adet Girişi ───── */
+function startQtyEdit(taskId, currentTotal) {
+    if (lockTaskCard(taskId)) return;
+
+    Swal.fire({
+        title: '<i class="bi bi-hash" style="color:var(--z-accent);margin-right:6px"></i> Adet Değiştir',
+        html: `
+            <div style="text-align:left;font-size:0.9rem;margin-bottom:12px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--z-text-secondary)">Mevcut adet:</span>
+                    <strong>${formatNumber(currentTotal)}</strong>
+                </div>
+            </div>
+            <input type="number" id="swalQtyInput" class="swal2-input" min="0" step="1"
+                   value="${currentTotal}" placeholder="Yeni adet girin"
+                   style="text-align:center;font-size:1.2rem;font-weight:700">
+            <div style="font-size:0.75rem;color:var(--z-text-secondary);margin-top:6px">
+                Havuzdan çekilir veya havuza iade edilir.
+            </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: '<i class="bi bi-check-lg"></i> Uygula',
+        cancelButtonText: 'Vazgeç',
+        confirmButtonColor: '#6366f1',
+        focusConfirm: false,
+        didOpen: () => {
+            const inp = document.getElementById('swalQtyInput');
+            if (inp) { inp.focus(); inp.select(); }
+        },
+        preConfirm: () => {
+            const val = parseInt(document.getElementById('swalQtyInput')?.value, 10);
+            if (isNaN(val) || val < 0) {
+                Swal.showValidationMessage('Geçerli bir sayı girin (0 veya üzeri).');
+                return false;
+            }
+            return val;
+        },
+    }).then((result) => {
+        if (!result.isConfirmed) {
+            unlockTaskCard(taskId);
+            return;
+        }
+        submitQtyEdit(taskId, result.value);
+    });
+}
+
+function submitQtyEdit(taskId, targetQty) {
+    Swal.fire({
+        title: 'Güncelleniyor…',
+        html: '<i class="bi bi-arrow-repeat" style="font-size:1.3rem;animation:spin 1s linear infinite"></i>',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+    });
+
+    fetch(`/api/planning/task/${taskId}/quantity`, {
+        method: 'PUT',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ target_quantity: targetQty }),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            unlockTaskCard(taskId);
+            if (!data.success) {
+                Swal.fire('Hata', data.message || 'Adet güncellenemedi.', 'error');
+                return;
+            }
+            Swal.fire({
+                title: 'Adet Güncellendi',
+                text: data.message || 'Başarılı.',
+                icon: 'success',
+                timer: 1800,
+                showConfirmButton: false,
+            });
+            loadPersonelTasks();
+        })
+        .catch((error) => {
+            unlockTaskCard(taskId);
+            Swal.fire('Hata', String(error), 'error');
+        });
+}
 
 function openDateModal(taskId) {
     document.getElementById('modalTaskId').value = taskId;
@@ -2117,7 +2465,7 @@ function initKeyboardShortcuts() {
 
             case '/':
                 e.preventDefault();
-                document.getElementById('personelSelect')?.focus();
+                pssOpen();
                 break;
 
             case 'n':
@@ -2153,6 +2501,7 @@ function navigatePersonnel(direction) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    pssInit();
     loadPersonelList();
     startAutoRefresh();
     initKeyboardShortcuts();

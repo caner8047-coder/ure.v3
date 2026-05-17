@@ -223,6 +223,7 @@ Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () 
     Route::put('/task/{id}/date', [ProductionPlanningController::class, 'updateTaskDate']);
     Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
     Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
+    Route::put('/task/{id}/quantity', [ProductionPlanningController::class, 'setTaskQuantity']);
 });
 
 // ===== Authenticated Personnel Pages =====
