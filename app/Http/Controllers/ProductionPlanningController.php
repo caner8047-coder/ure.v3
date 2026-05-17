@@ -798,6 +798,119 @@ class ProductionPlanningController extends Controller
     }
 
     /**
+     * Görev geçmişini (event timeline) getirir.
+     */
+    public function getTaskHistory($taskId)
+    {
+        if (!Schema::hasTable('work_order_events')) {
+            return response()->json(['success' => true, 'data' => [], 'message' => 'Event tablosu bulunamadı.']);
+        }
+
+        $task = DB::table('tbPersonelGorev')->where('No', $taskId)->first();
+        if (!$task) {
+            return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+        }
+
+        $taskNo = intval($task->No ?? 0);
+        $orderItemNo = intval($task->SiparisSatirNo ?? 0);
+        $componentNo = intval($task->AraUrunAdiNo ?? 0);
+
+        // Event'ları topla — personnel_task_no veya aggregate_id eşleşmesiyle
+        $query = DB::table('work_order_events')
+            ->where(function ($q) use ($taskNo, $orderItemNo) {
+                $q->where('personnel_task_no', $taskNo);
+                if ($orderItemNo > 0) {
+                    $q->orWhere(function ($sub) use ($orderItemNo) {
+                        $sub->where('aggregate_type', 'order_item')
+                            ->where('aggregate_id', $orderItemNo);
+                    });
+                }
+            })
+            ->select(
+                'event_type',
+                'title_human',
+                'summary_human',
+                'actor_name',
+                'source_screen',
+                'happened_at',
+                'context',
+                'payload_before',
+                'payload_after'
+            )
+            ->orderBy('happened_at', 'asc')
+            ->limit(50)
+            ->get();
+
+        $iconMap = [
+            'planning_incremented' => 'bi-chevron-up',
+            'planning_decremented' => 'bi-chevron-down',
+            'planning_rescheduled' => 'bi-calendar-event',
+            'planning_quantity_set' => 'bi-hash',
+            'planning_transferred' => 'bi-person-up',
+            'personnel_task_taken' => 'bi-person-check',
+            'production_completed_partial' => 'bi-play-circle',
+            'production_completed_full' => 'bi-check-circle',
+            'personnel_task_deleted' => 'bi-trash',
+            'task_assigned_by_admin' => 'bi-person-plus',
+            'work_order_created_single' => 'bi-plus-circle',
+            'work_order_created_bulk' => 'bi-plus-circle',
+            'work_order_created_manual' => 'bi-plus-circle',
+            'work_order_cancelled' => 'bi-x-circle',
+        ];
+
+        $colorMap = [
+            'planning_incremented' => '#059669',
+            'planning_decremented' => '#d97706',
+            'planning_rescheduled' => '#3b82f6',
+            'planning_quantity_set' => '#6366f1',
+            'planning_transferred' => '#d97706',
+            'personnel_task_taken' => '#059669',
+            'production_completed_partial' => '#d97706',
+            'production_completed_full' => '#059669',
+            'personnel_task_deleted' => '#dc2626',
+            'task_assigned_by_admin' => '#6366f1',
+            'work_order_created_single' => '#059669',
+            'work_order_created_bulk' => '#059669',
+            'work_order_created_manual' => '#059669',
+            'work_order_cancelled' => '#dc2626',
+        ];
+
+        $events = $query->map(function ($event) use ($iconMap, $colorMap) {
+            $type = $event->event_type ?? '';
+            $context = is_string($event->context) ? json_decode($event->context, true) : ($event->context ?? []);
+
+            $detail = '';
+            if (!empty($context['previous_total']) || !empty($context['new_total'])) {
+                $detail = 'Adet: ' . ($context['previous_total'] ?? '?') . ' → ' . ($context['new_total'] ?? '?');
+            } elseif (!empty($context['diff'])) {
+                $diff = intval($context['diff']);
+                $detail = $diff > 0 ? "+{$diff} adet" : "{$diff} adet";
+            }
+
+            return [
+                'type' => $type,
+                'icon' => $iconMap[$type] ?? 'bi-circle',
+                'color' => $colorMap[$type] ?? '#6b7280',
+                'title' => $event->title_human ?? $type,
+                'summary' => $event->summary_human ?? '',
+                'detail' => $detail,
+                'actor' => $event->actor_name ?? 'Sistem',
+                'screen' => $event->source_screen ?? '',
+                'date' => $event->happened_at ? date('d/m/Y H:i', strtotime($event->happened_at)) : '',
+            ];
+        });
+
+        // Ara ürün adını da döndür
+        $componentName = DB::table('tbAraUrun')->where('No', $componentNo)->value('AraUrunAdi') ?? '';
+
+        return response()->json([
+            'success' => true,
+            'data' => $events,
+            'component_name' => $componentName,
+        ]);
+    }
+
+    /**
      * Görev adetini +1 artırır.
      */
     public function incrementTask($taskId)

@@ -224,6 +224,7 @@ Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () 
     Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
     Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
     Route::put('/task/{id}/quantity', [ProductionPlanningController::class, 'setTaskQuantity']);
+    Route::get('/task/{id}/history', [ProductionPlanningController::class, 'getTaskHistory']);
 });
 
 // ===== Authenticated Personnel Pages =====

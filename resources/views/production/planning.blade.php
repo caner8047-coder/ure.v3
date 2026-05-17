@@ -194,6 +194,43 @@
         box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
     }
 
+    /* ───── Özellik #7: Görev Geçmişi Timeline ───── */
+    .planning-timeline { padding: 4px 0; text-align: left; }
+    .planning-tl-item {
+        display: flex;
+        gap: 12px;
+        position: relative;
+        padding-bottom: 16px;
+    }
+    .planning-tl-item:last-child { padding-bottom: 0; }
+    .planning-tl-item::before {
+        content: '';
+        position: absolute;
+        left: 13px;
+        top: 28px;
+        bottom: 0;
+        width: 2px;
+        background: var(--z-border-light);
+    }
+    .planning-tl-item:last-child::before { display: none; }
+    .planning-tl-dot {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.78rem;
+        color: #fff;
+        z-index: 1;
+    }
+    .planning-tl-body { flex: 1; min-width: 0; }
+    .planning-tl-title { font-size: 0.82rem; font-weight: 700; color: var(--z-text); line-height: 1.3; }
+    .planning-tl-detail { font-size: 0.75rem; color: var(--z-accent); font-weight: 700; margin-top: 1px; }
+    .planning-tl-meta { font-size: 0.7rem; color: var(--z-text-secondary); margin-top: 2px; }
+    .planning-tl-empty { text-align: center; padding: 20px; color: var(--z-text-secondary); font-size: 0.85rem; }
+
     .planning-view-switch {
         display: flex;
         flex-wrap: wrap;
@@ -1483,6 +1520,9 @@ function renderTaskCard(task) {
                 <button class="planning-icon-btn is-pool-return" type="button" onclick="returnToPool(${id})" title="Havuza iade et">
                     <i class="bi bi-box-arrow-in-left"></i>
                 </button>
+                <button class="planning-icon-btn" type="button" onclick="showTaskHistory(${id})" title="Görev geçmişi" style="color:#6b7280">
+                    <i class="bi bi-clock-history"></i>
+                </button>
             </div>
         </div>
     `;
@@ -2019,6 +2059,68 @@ function executeReturnToPoolFromModal(taskId) {
             loadPersonelTasks();
         })
         .catch((error) => Swal.fire('Hata', String(error), 'error'));
+}
+
+/* ───── Özellik #7: Görev Geçmişi Timeline ───── */
+function showTaskHistory(taskId) {
+    Swal.fire({
+        title: '<i class="bi bi-clock-history" style="color:#6366f1;margin-right:6px"></i> Görev Geçmişi',
+        html: '<div style="text-align:center;padding:16px 0"><i class="bi bi-arrow-repeat" style="font-size:1.5rem;color:var(--z-text-secondary);animation:spin 1s linear infinite"></i><br><small style="color:var(--z-text-secondary)">Geçmiş yükleniyor…</small></div>',
+        showConfirmButton: false,
+        showCancelButton: true,
+        cancelButtonText: 'Kapat',
+        width: 480,
+        didOpen: () => {
+            fetch(`/api/planning/task/${taskId}/history`, {
+                headers: csrfHeaders()
+            })
+                .then((r) => r.json())
+                .then((data) => {
+                    if (!data.success) {
+                        Swal.update({
+                            html: `<div style="color:#dc2626;padding:12px"><i class="bi bi-exclamation-triangle"></i> ${escapeHtml(data.message || 'Geçmiş yüklenemedi.')}</div>`,
+                        });
+                        return;
+                    }
+
+                    const events = data.data || [];
+                    const compName = data.component_name || '';
+
+                    if (!events.length) {
+                        Swal.update({
+                            html: `<div class="planning-tl-empty"><i class="bi bi-inbox" style="font-size:1.5rem;display:block;margin-bottom:8px"></i>Bu görev için henüz kayıtlı geçmiş yok.</div>`,
+                        });
+                        return;
+                    }
+
+                    const header = compName ? `<div style="font-size:0.8rem;color:var(--z-text-secondary);margin-bottom:12px;text-align:left"><strong>Ara Ürün:</strong> ${escapeHtml(compName)}</div>` : '';
+
+                    const timelineHtml = events.map((ev) => `
+                        <div class="planning-tl-item">
+                            <div class="planning-tl-dot" style="background:${ev.color}">
+                                <i class="bi ${ev.icon}"></i>
+                            </div>
+                            <div class="planning-tl-body">
+                                <div class="planning-tl-title">${escapeHtml(ev.title)}</div>
+                                ${ev.detail ? `<div class="planning-tl-detail">${escapeHtml(ev.detail)}</div>` : ''}
+                                <div class="planning-tl-meta">
+                                    ${escapeHtml(ev.date)}${ev.actor ? ' · ' + escapeHtml(ev.actor) : ''}${ev.screen ? ' · ' + escapeHtml(ev.screen) : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    Swal.update({
+                        html: `${header}<div class="planning-timeline">${timelineHtml}</div>`,
+                    });
+                })
+                .catch((error) => {
+                    Swal.update({
+                        html: `<div style="color:#dc2626;padding:12px"><i class="bi bi-exclamation-triangle"></i> Bağlantı hatası: ${escapeHtml(String(error))}</div>`,
+                    });
+                });
+        },
+    });
 }
 
 /* ───── Özellik #1: Toplu Adet Girişi ───── */
