@@ -1,76 +1,288 @@
 @extends('layouts.app')
 
-@section('title', 'Uretim Planlama')
+@section('title', 'Üretim Planlama')
 
 @section('page-actions')
     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadCurrentPlanningTab()">
-        <i class="bi bi-arrow-repeat me-1"></i>Aktif Sekmeyi Yenile
+        <i class="bi bi-arrow-repeat me-1"></i>Yenile
     </button>
     <button type="button" class="btn btn-primary btn-sm" onclick="loadPersonelList()">
-        <i class="bi bi-people me-1"></i>Personelleri Guncelle
+        <i class="bi bi-people me-1"></i>Personel
     </button>
 @endsection
 
 @push('styles')
 <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
 <style>
-    .planning-control-grid {
+    .planning-legacy-shell {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
-        margin-bottom: 18px;
+        gap: 26px;
     }
 
-    .planning-task-groups {
+    .planning-workbench {
+        padding: 28px 0 0;
+    }
+
+    .planning-headline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 14px;
+    }
+
+    .planning-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        color: #4a3424;
+        font-size: 1.8rem;
+        font-weight: 700;
+        letter-spacing: 0;
+    }
+
+    .planning-title i {
+        color: #6f5436;
+        font-size: 1.35rem;
+    }
+
+    .planning-status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        padding: 6px 12px;
+        border: 1px solid var(--z-border);
+        border-radius: 6px;
+        background: var(--z-bg-card);
+        color: var(--z-text-secondary);
+        font-size: 0.78rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .planning-status-badge.success {
+        border-color: rgba(5, 150, 105, 0.18);
+        background: var(--z-success-soft);
+        color: var(--z-success);
+    }
+
+    .planning-status-badge.warning {
+        border-color: rgba(217, 119, 6, 0.18);
+        background: var(--z-warning-soft);
+        color: var(--z-warning);
+    }
+
+    .planning-status-badge.danger {
+        border-color: rgba(220, 38, 38, 0.18);
+        background: var(--z-danger-soft);
+        color: var(--z-danger);
+    }
+
+    .planning-controls {
+        display: grid;
+        grid-template-columns: minmax(220px, 300px) minmax(160px, 200px) minmax(150px, 220px) auto;
+        gap: 18px;
+        align-items: center;
+        margin-bottom: 28px;
+    }
+
+    .planning-controls .form-select,
+    .planning-controls .form-control,
+    .planning-controls .btn {
+        min-height: 46px;
+        font-size: 1rem;
+    }
+
+    .planning-view-switch {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 22px;
+    }
+
+    .planning-view-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 38px;
+        padding: 7px 13px;
+        border: 1px solid var(--z-border);
+        border-radius: 6px;
+        background: var(--z-bg-card);
+        color: var(--z-text-secondary);
+        font-weight: 700;
+        font-size: 0.86rem;
+    }
+
+    .planning-view-btn.active {
+        border-color: var(--z-accent);
+        background: var(--z-accent);
+        color: #fff;
+    }
+
+    .planning-section-title {
+        margin: 0 0 16px;
+        color: #4a3424;
+        font-size: 1.55rem;
+        font-weight: 800;
+        letter-spacing: 0;
+    }
+
+    .planning-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 18px;
+        color: var(--z-text-secondary);
+        font-size: 0.84rem;
+    }
+
+    .planning-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        padding: 4px 9px;
+        border-radius: 6px;
+        background: var(--z-bg-soft);
+        color: var(--z-text-secondary);
+        font-size: 0.76rem;
+        font-weight: 700;
+    }
+
+    .planning-board {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(230px, 1fr));
+        gap: 26px 34px;
+        align-items: start;
+    }
+
+    .planning-date-column {
+        min-height: 264px;
+        padding: 18px 20px 20px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: #fff;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    }
+
+    .planning-date-column.is-drop-target {
+        border-color: var(--z-accent);
+        box-shadow: 0 0 0 3px var(--z-accent-soft);
+    }
+
+    .planning-date-header {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 14px;
+        text-align: center;
+    }
+
+    .planning-date-label {
+        padding-bottom: 9px;
+        border-bottom: 1px solid var(--z-border);
+        color: #2d2f33;
+        font-size: 1.22rem;
+        font-weight: 800;
+        line-height: 1.15;
+    }
+
+    .planning-date-stats {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .planning-task-list {
         display: grid;
         gap: 12px;
     }
 
-    .planning-date-group {
-        padding: 16px;
-        border: 1px solid var(--z-border);
-        border-radius: var(--z-radius);
-        background: var(--z-bg-card);
-    }
-
-    .planning-date-header {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 12px;
-        font-weight: 600;
-    }
-
-    .planning-date-label {
-        font-size: 0.88rem;
-    }
-
     .planning-task-card {
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        gap: 10px;
+        min-height: 104px;
+        padding: 13px 14px;
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #111827;
+        cursor: grab;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+    }
+
+    .planning-task-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 18px rgba(17, 24, 39, 0.12);
+    }
+
+    .planning-task-card.is-available,
+    .planning-task-card.is-ready {
+        border-color: rgba(5, 150, 105, 0.42);
+        background: #d1fae5;
+    }
+
+    .planning-task-card.is-blocked,
+    .planning-task-card.is-waiting {
+        border-color: rgba(220, 38, 38, 0.42);
+        background: #fee2e2;
+    }
+
+    .planning-task-card.is-active {
+        border-color: rgba(217, 119, 6, 0.42);
+        background: #fef3c7;
+    }
+
+    .planning-task-card.is-neutral {
+        border-color: rgba(107, 114, 128, 0.24);
+        background: #f3f4f6;
+    }
+
+    .planning-task-card.is-dragging {
+        opacity: 0.55;
+    }
+
+    .planning-task-copy {
+        min-width: 0;
+        font-size: 0.98rem;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+    }
+
+    .planning-task-copy strong {
+        font-weight: 800;
+    }
+
+    .planning-task-status {
+        display: inline-flex;
         align-items: center;
-        gap: 16px;
-        padding: 12px 14px;
-        border: 1px solid var(--z-border-light);
-        border-radius: var(--z-radius-sm);
-        background: var(--z-bg-soft);
-        margin-bottom: 6px;
+        width: fit-content;
+        gap: 6px;
+        min-height: 26px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #111827;
+        font-size: 0.74rem;
+        font-weight: 800;
     }
 
-    .planning-task-card:last-child { margin-bottom: 0; }
-
-    .planning-task-title {
-        font-weight: 600;
-        font-size: 0.88rem;
-        color: var(--z-text);
+    .planning-task-card.is-available .planning-task-status,
+    .planning-task-card.is-ready .planning-task-status {
+        color: #047857;
     }
 
-    .planning-task-meta {
-        margin-top: 4px;
-        color: var(--z-text-secondary);
-        font-size: 0.8rem;
-        line-height: 1.5;
+    .planning-task-card.is-blocked .planning-task-status,
+    .planning-task-card.is-waiting .planning-task-status {
+        color: #b91c1c;
+    }
+
+    .planning-task-card.is-active .planning-task-status {
+        color: #b45309;
     }
 
     .planning-task-actions {
@@ -80,202 +292,439 @@
         gap: 6px;
     }
 
-    .planning-task-actions .btn { min-width: 36px; }
+    .planning-icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: 1px solid rgba(17, 24, 39, 0.14);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.8);
+        color: #111827;
+        transition: transform 0.12s ease, background 0.12s ease;
+    }
 
-    .planning-empty {
+    .planning-icon-btn:hover {
+        transform: translateY(-1px);
+        background: #fff;
+    }
+
+    .planning-icon-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.42;
+        transform: none;
+    }
+
+    .planning-icon-btn.is-info {
+        color: var(--z-accent);
+    }
+
+    .planning-icon-btn.is-transfer {
+        color: #d97706;
+    }
+    .planning-icon-btn.is-transfer:hover {
+        background: #fef3c7;
+        color: #b45309;
+    }
+
+    .planning-icon-btn.is-pool-return {
+        color: #6366f1;
+    }
+    .planning-icon-btn.is-pool-return:hover {
+        background: #eef2ff;
+        color: #4338ca;
+    }
+
+    /* Aktarma popup stilleri */
+    .transfer-modal { text-align: left; color: var(--z-text); }
+    .transfer-task-info {
+        background: var(--z-bg-soft);
+        border: 1px solid var(--z-border-light);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 16px;
+    }
+    .transfer-task-info .transfer-info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        font-size: 0.85rem;
+    }
+    .transfer-task-info .transfer-info-row .transfer-label {
+        color: var(--z-text-secondary);
+        font-weight: 500;
+    }
+    .transfer-task-info .transfer-info-row .transfer-value {
+        font-weight: 700;
+        color: var(--z-text);
+    }
+    .transfer-personnel-select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1.5px solid var(--z-border-light);
+        border-radius: 8px;
+        font-size: 0.9rem;
+        background: var(--z-bg);
+        color: var(--z-text);
+        cursor: pointer;
+        transition: border-color 0.2s;
+    }
+    .transfer-personnel-select:focus {
+        outline: none;
+        border-color: var(--z-accent);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    }
+    .transfer-section-label {
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--z-text-secondary);
+        margin-bottom: 6px;
+    }
+    .transfer-divider {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 14px 0;
+        font-size: 0.78rem;
+        color: var(--z-text-secondary);
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .transfer-divider::before,
+    .transfer-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--z-border-light);
+    }
+    .transfer-pool-btn {
+        width: 100%;
+        padding: 10px;
+        border: 1.5px solid var(--z-border-light);
+        border-radius: 8px;
+        background: var(--z-bg-soft);
+        color: var(--z-text);
+        font-size: 0.88rem;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.2s;
+    }
+    .transfer-pool-btn:hover {
+        background: #fef2f2;
+        border-color: #fca5a5;
+        color: #dc2626;
+    }
+    .transfer-pool-btn i {
+        font-size: 1rem;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    .planning-dependency-modal {
+        color: var(--z-text);
+        text-align: left;
+    }
+
+    .planning-dependency-modal h4 {
+        font-size: 0.95rem;
+        font-weight: 800;
+        margin: 0 0 8px;
+    }
+
+    .planning-dependency-summary {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin: 10px 0 12px;
+    }
+
+    .planning-dependency-summary span {
+        background: var(--z-bg-soft);
+        border: 1px solid var(--z-border-light);
+        border-radius: 6px;
+        color: var(--z-text-secondary);
+        font-size: 0.78rem;
+        padding: 8px;
+    }
+
+    .planning-dependency-summary strong {
+        color: var(--z-text);
+        display: block;
+        font-size: 0.95rem;
+        margin-top: 2px;
+    }
+
+    .planning-dependency-block {
+        border: 1px solid var(--z-border);
+        border-radius: 8px;
+        margin-top: 12px;
+        padding: 12px;
+    }
+
+    .planning-dependency-person {
+        background: #fff;
+        border: 1px solid var(--z-border-light);
+        border-radius: 6px;
+        margin-top: 8px;
+        padding: 10px;
+    }
+
+    .planning-dependency-person-head {
+        align-items: flex-start;
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+    }
+
+    .planning-dependency-person strong {
+        display: block;
+        font-size: 0.9rem;
+        line-height: 1.2;
+    }
+
+    .planning-dependency-person small,
+    .planning-dependency-person p {
+        color: var(--z-text-secondary);
+        font-size: 0.78rem;
+    }
+
+    .planning-dependency-person p {
+        margin: 7px 0 0;
+    }
+
+    .planning-dependency-empty {
+        background: var(--z-bg-soft);
+        border: 1px dashed var(--z-border);
+        border-radius: 6px;
+        color: var(--z-text-secondary);
+        font-size: 0.85rem;
+        margin-top: 8px;
+        padding: 10px;
+        text-align: center;
+    }
+
+    .planning-date-empty {
         display: grid;
         place-items: center;
-        min-height: 180px;
-        text-align: center;
+        min-height: 96px;
+        border: 1px dashed var(--z-border);
+        border-radius: 6px;
         color: var(--z-text-muted);
+        font-size: 0.86rem;
+        font-weight: 700;
+    }
+
+    .planning-empty-state {
+        display: grid;
+        place-items: center;
+        min-height: 260px;
+        padding: 30px;
+        border: 1px dashed var(--z-border);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--z-text-muted);
+        text-align: center;
         gap: 8px;
     }
 
-    .planning-empty i {
-        font-size: 2rem;
+    .planning-empty-state i {
         color: var(--z-accent);
-        opacity: 0.4;
+        font-size: 2rem;
+        opacity: 0.45;
     }
 
-    .planning-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 3px 10px;
-        border-radius: 4px;
-        background: var(--z-bg-soft);
-        color: var(--z-text-secondary);
-        font-size: 0.72rem;
-        font-weight: 600;
+    .planning-summary-panel {
+        padding: 20px;
+        border: 1px solid var(--z-border);
+        border-radius: 8px;
+        background: var(--z-bg-card);
     }
 
-    .planning-pill.success { background: var(--z-success-soft); color: var(--z-success); }
-    .planning-pill.warning { background: var(--z-warning-soft); color: var(--z-warning); }
-    .planning-pill.danger { background: var(--z-danger-soft); color: var(--z-danger); }
+    .planning-summary-toolbar {
+        display: grid;
+        grid-template-columns: minmax(200px, 280px) minmax(160px, 200px) minmax(160px, 220px);
+        gap: 14px;
+        align-items: end;
+        margin-bottom: 18px;
+    }
 
     .planning-summary-table th,
-    .planning-summary-table td { white-space: nowrap; }
-    .planning-summary-table td:first-child { white-space: normal; }
+    .planning-summary-table td {
+        white-space: nowrap;
+    }
 
-    @media (max-width: 1080px) {
-        .planning-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .planning-task-card { flex-direction: column; align-items: flex-start; }
-        .planning-task-actions { justify-content: flex-start; }
+    .planning-summary-table td:first-child {
+        white-space: normal;
+        min-width: 240px;
+    }
+
+    [hidden] {
+        display: none !important;
+    }
+
+    @media (max-width: 1320px) {
+        .planning-board {
+            grid-template-columns: repeat(3, minmax(230px, 1fr));
+        }
+    }
+
+    @media (max-width: 1040px) {
+        .planning-controls,
+        .planning-summary-toolbar {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .planning-board {
+            grid-template-columns: repeat(2, minmax(230px, 1fr));
+            gap: 20px;
+        }
     }
 
     @media (max-width: 720px) {
-        .planning-control-grid { grid-template-columns: 1fr; }
+        .planning-headline {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .planning-title {
+            font-size: 1.45rem;
+        }
+
+        .planning-controls,
+        .planning-summary-toolbar,
+        .planning-board {
+            grid-template-columns: 1fr;
+        }
+
+        .planning-workbench {
+            padding-top: 12px;
+        }
+
+        .planning-date-column {
+            min-height: 220px;
+            padding: 16px;
+        }
     }
 </style>
 @endpush
 
 @section('content')
-    {{-- Inline Stats --}}
-    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
-        <article class="metric-card">
-            <p class="metric-label">Personel</p>
-            <h3 class="metric-value" id="planningPersonnelInline">0</h3>
-        </article>
-        <article class="metric-card">
-            <p class="metric-label">Gorev</p>
-            <h3 class="metric-value" id="planningTaskInline">0</h3>
-        </article>
-        <article class="metric-card">
-            <p class="metric-label">Ozet Satiri</p>
-            <h3 class="metric-value" id="planningSummaryInline">0</h3>
-        </article>
-        <article class="metric-card">
-            <p class="metric-label">Aktif Gorunum</p>
-            <h3 class="metric-value" id="planningActiveInline" style="font-size: 1rem;">Personel</h3>
-        </article>
-    </div>
-
-    {{-- Status Bar --}}
-    <div class="panel-surface">
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-            <div class="d-flex flex-wrap gap-3">
-                <span class="small"><span class="text-muted">Sekme:</span> <strong id="planningActiveMeta">Personel Planlama</strong></span>
-                <span class="small"><span class="text-muted">Personel:</span> <strong id="planningSelectedPersonnel">Henuz secilmedi</strong></span>
-                <span class="small"><span class="text-muted">Gorev:</span> <strong id="planningTaskMeta">0</strong></span>
-                <span class="small"><span class="text-muted">Son:</span> <strong id="planningUpdatedMeta">Bekleniyor</strong></span>
+    <div class="planning-legacy-shell">
+        <section class="planning-workbench">
+            <div class="planning-headline">
+                <h2 class="planning-title">
+                    <i class="bi bi-stack"></i>
+                    Görev Planlaması
+                </h2>
+                <span class="planning-status-badge" id="planningStatusPill">Hazır</span>
             </div>
-            <span class="planning-pill" id="planningStatusPill">Hazir</span>
-        </div>
-    </div>
 
-    {{-- Tabs --}}
-    <section class="panel-surface">
-        <ul class="nav planning-tabs" id="planningTabs" role="tablist" style="display:flex;gap:4px;margin-bottom:16px;border:none;">
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabPersonelPlanlama" type="button" role="tab" aria-selected="true">
-                    <i class="bi bi-people me-1"></i>Personel Planlama
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabSiparisOzeti" type="button" role="tab" aria-selected="false">
-                    <i class="bi bi-list-check me-1"></i>Siparis Ozeti
-                </button>
-            </li>
-        </ul>
+            <div class="planning-controls">
+                <label class="visually-hidden" for="personelSelect">Personel seçin</label>
+                <select id="personelSelect" class="form-select" onchange="handlePersonnelChange()">
+                    <option value="">Personel Seçin</option>
+                </select>
 
-        <div class="tab-content">
-            <div class="tab-pane fade show active" id="tabPersonelPlanlama" role="tabpanel">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h3 class="section-title mb-0">Tarih bazli gorev dagilimi</h3>
-                    <span class="planning-pill success" id="taskCount">0 gorev</span>
+                <label class="visually-hidden" for="yeniTarih">Yeni tarih</label>
+                <input type="date" id="yeniTarih" class="form-control" value="{{ date('Y-m-d') }}">
+
+                <button class="btn btn-outline-secondary" type="button" onclick="tarihKutusuEkle()">
+                    <i class="bi bi-calendar-plus me-1"></i>Tarih Ekle
+                </button>
+
+                <button class="btn btn-primary" type="button" onclick="loadPersonelTasks()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Görevleri Getir
+                </button>
+            </div>
+
+            <div class="planning-view-switch" role="tablist" aria-label="Planlama görünümü">
+                <button class="planning-view-btn active" id="personnelViewButton" type="button" onclick="showPlanningView('personnel')">
+                    <i class="bi bi-people"></i>Personel Planlama
+                </button>
+                <button class="planning-view-btn" id="summaryViewButton" type="button" onclick="showPlanningView('summary')">
+                    <i class="bi bi-list-check"></i>Sipariş Özeti
+                </button>
+            </div>
+
+            <div id="personnelPlanningView">
+                <h3 class="planning-section-title" id="departmentTitle">Görev Planlaması</h3>
+                <div class="planning-meta-row">
+                    <span class="planning-chip"><i class="bi bi-person"></i><span id="planningSelectedPersonnel">Personel seçilmedi</span></span>
+                    <span class="planning-chip"><i class="bi bi-list-task"></i><span id="taskCount">0 görev</span></span>
+                    <span class="planning-chip"><i class="bi bi-clock"></i><span id="planningUpdatedMeta">Bekleniyor</span></span>
                 </div>
 
-                <div class="planning-control-grid">
-                    <div>
-                        <label class="form-label">Personel secin</label>
-                        <select id="personelSelect" class="form-select" onchange="loadPersonelTasks()">
-                            <option value="">-- Personel seciniz --</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="form-label">Yeni tarih</label>
-                        <input type="date" id="yeniTarih" class="form-control" value="{{ date('Y-m-d') }}">
-                    </div>
-
-                    <div>
-                        <label class="form-label">Bos tarih kutusu</label>
-                        <button class="btn btn-outline-secondary w-100" type="button" onclick="tarihKutusuEkle()">
-                            <i class="bi bi-calendar-plus me-1"></i>Tarih Ekle
-                        </button>
-                    </div>
-
-                    <div>
-                        <label class="form-label">Veri yenile</label>
-                        <button class="btn btn-primary w-100" type="button" onclick="loadPersonelTasks()">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Gorevleri Getir
-                        </button>
-                    </div>
-                </div>
-
-                <div id="personelTasksArea" class="planning-task-groups">
-                    <div class="planning-empty">
+                <div id="personelTasksArea" class="planning-board">
+                    <div class="planning-empty-state" style="grid-column: 1 / -1;">
                         <i class="bi bi-arrow-up-circle"></i>
-                        <strong>Yukaridan bir personel sec.</strong>
-                        <span>Secimden sonra gorevler tarih gruplari halinde burada gorunecek.</span>
+                        <strong>Personel Seçin</strong>
                     </div>
                 </div>
             </div>
 
-            <div class="tab-pane fade" id="tabSiparisOzeti" role="tabpanel">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h3 class="section-title mb-0">Toplu uretim ozet tablosu</h3>
-                    <span class="planning-pill warning" id="planningSummaryBadge">0 satir</span>
-                </div>
-
-                <div class="planning-control-grid">
-                    <div>
-                        <label class="form-label">Kategori</label>
-                        <select id="kategoriFilter" class="form-select">
-                            <option value="">Tum Kategoriler</option>
-                        </select>
+            <div id="summaryPlanningView" hidden>
+                <div class="planning-summary-panel">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <h3 class="planning-section-title mb-0">Sipariş Özeti</h3>
+                        <span class="planning-chip" id="planningSummaryBadge">0 satır</span>
                     </div>
 
-                    <div>
-                        <label class="form-label">Referans tarih</label>
-                        <input type="date" id="tarihFilter" class="form-control" value="{{ date('Y-m-d') }}">
-                    </div>
+                    <div class="planning-summary-toolbar">
+                        <div>
+                            <label class="form-label" for="kategoriFilter">Kategori</label>
+                            <select id="kategoriFilter" class="form-select">
+                                <option value="">Tüm Kategoriler</option>
+                            </select>
+                        </div>
 
-                    <div style="grid-column: span 2;">
-                        <label class="form-label">Ozeti yenile</label>
-                        <button class="btn btn-primary w-100" type="button" onclick="loadSummary()">
-                            <i class="bi bi-search me-1"></i>Ozeti Getir
+                        <div>
+                            <label class="form-label" for="tarihFilter">Referans tarih</label>
+                            <input type="date" id="tarihFilter" class="form-control" value="{{ date('Y-m-d') }}">
+                        </div>
+
+                        <button class="btn btn-primary" type="button" onclick="loadSummary()">
+                            <i class="bi bi-search me-1"></i>Özeti Getir
                         </button>
                     </div>
-                </div>
 
-                <div class="table-shell">
-                    <table class="table-modern planning-summary-table" id="planningTable">
-                        <thead>
-                            <tr>
-                                <th>Urun</th>
-                                <th>Toplam Siparis</th>
-                                <th>Uretilebilir</th>
-                                <th>Eksik Miktar</th>
-                                <th>Kargo Son Teslim</th>
-                                <th>Durum</th>
-                                <th>Islem</th>
-                            </tr>
-                        </thead>
-                        <tbody id="planningBody">
-                            <tr><td colspan="7" class="text-center text-muted py-4">Siparis ozeti yukleniyor...</td></tr>
-                        </tbody>
-                    </table>
+                    <div class="table-shell">
+                        <table class="table-modern planning-summary-table" id="planningTable">
+                            <thead>
+                                <tr>
+                                    <th>Ürün</th>
+                                    <th>Toplam Sipariş</th>
+                                    <th>Üretilebilir</th>
+                                    <th>Eksik Miktar</th>
+                                    <th>Kargo Son Teslim</th>
+                                    <th>Durum</th>
+                                    <th>İşlem</th>
+                                </tr>
+                            </thead>
+                            <tbody id="planningBody">
+                                <tr><td colspan="7" class="text-center text-muted py-4">Sipariş özeti yükleniyor...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
-        </div>
-    </section>
+        </section>
+    </div>
 
     <div class="modal fade" id="dateModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-sm">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h6 class="modal-title"><i class="bi bi-calendar-event me-1"></i>Tarih Degistir</h6>
+                    <h6 class="modal-title"><i class="bi bi-calendar-event me-1"></i>Tarih Değiştir</h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -283,7 +732,7 @@
                     <input type="hidden" id="modalTaskId">
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Iptal</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">İptal</button>
                     <button type="button" class="btn btn-primary btn-sm" onclick="submitDateChange()">
                         <i class="bi bi-check-lg me-1"></i>Kaydet
                     </button>
@@ -297,22 +746,12 @@
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
 let currentPersonelNo = null;
-
-function setPlanningStamp(text) {
-    const label = text || new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-    document.getElementById('planningUpdatedMeta').textContent = label;
-}
-
-function setPlanningActive(label) {
-    document.getElementById('planningActiveInline').textContent = label;
-    document.getElementById('planningActiveMeta').textContent = label;
-}
+let currentPlanningView = 'personnel';
+let planningSummaryRows = [];
+const pendingEmptyDateKeys = new Set();
 
 function loadCurrentPlanningTab() {
-    const activeTab = document.querySelector('#planningTabs .nav-link.active');
-    const target = activeTab ? activeTab.getAttribute('data-bs-target') : '#tabPersonelPlanlama';
-
-    if (target === '#tabSiparisOzeti') {
+    if (currentPlanningView === 'summary') {
         loadSummary();
         return;
     }
@@ -320,219 +759,786 @@ function loadCurrentPlanningTab() {
     loadPersonelTasks();
 }
 
+function csrfHeaders(extra = {}) {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    return token ? { ...extra, 'X-CSRF-TOKEN': token } : extra;
+}
+
+function setPlanningStamp(text) {
+    const label = text || new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('planningUpdatedMeta').textContent = label;
+}
+
+function setPlanningStatus(label, tone = '') {
+    const pill = document.getElementById('planningStatusPill');
+    pill.textContent = label;
+    pill.className = `planning-status-badge ${tone}`.trim();
+}
+
+function showPlanningView(view) {
+    currentPlanningView = view;
+    const showSummary = view === 'summary';
+
+    document.getElementById('personnelPlanningView').hidden = showSummary;
+    document.getElementById('summaryPlanningView').hidden = !showSummary;
+    document.getElementById('personnelViewButton').classList.toggle('active', !showSummary);
+    document.getElementById('summaryViewButton').classList.toggle('active', showSummary);
+
+    if (showSummary) {
+        loadSummary();
+    }
+}
+
 function loadPersonelList() {
+    setPlanningStatus('Yükleniyor', 'warning');
+
     fetch('/api/planning/personnel')
         .then((r) => r.json())
         .then((data) => {
-            if (!data.success) return;
+            if (!data.success) {
+                setPlanningStatus('Hata', 'danger');
+                return;
+            }
 
             const select = document.getElementById('personelSelect');
-            const current = select.value;
-            select.innerHTML = '<option value="">-- Personel seciniz --</option>';
+            const fromQuery = new URLSearchParams(window.location.search).get('personel_no');
+            const current = select.value || fromQuery || '';
 
+            select.innerHTML = '<option value="">Personel Seçin</option>';
             (data.data || []).forEach((personnel) => {
-                select.innerHTML += `<option value="${personnel.PersonelNo}">${escapeHtml(personnel.PersonelAdi)}</option>`;
+                select.innerHTML += `<option value="${escapeHtml(personnel.PersonelNo)}">${escapeHtml(personnel.PersonelAdi)}</option>`;
             });
 
             if (current) {
                 select.value = current;
             }
 
-            document.getElementById('planningPersonnelInline').textContent = formatNumber((data.data || []).length);
-            setPlanningStamp();
+            if (select.value) {
+                currentPersonelNo = select.value;
+                loadPersonelTasks();
+            } else {
+                renderEmptyPersonnelState();
+                setPlanningStatus('Hazır');
+            }
         })
         .catch(() => {
-            Swal.fire('Hata', 'Personel listesi yuklenemedi.', 'error');
+            setPlanningStatus('Hata', 'danger');
+            Swal.fire('Hata', 'Personel listesi yüklenemedi.', 'error');
         });
+}
+
+function handlePersonnelChange() {
+    const selected = document.getElementById('personelSelect').value || '';
+    if (selected !== currentPersonelNo) {
+        pendingEmptyDateKeys.clear();
+    }
+
+    currentPersonelNo = selected;
+    loadPersonelTasks();
 }
 
 function loadPersonelTasks() {
     const select = document.getElementById('personelSelect');
-    currentPersonelNo = select.value;
     const area = document.getElementById('personelTasksArea');
+    currentPersonelNo = select.value || '';
 
     if (!currentPersonelNo) {
-        area.innerHTML = `
-            <div class="planning-empty">
-                <i class="bi bi-arrow-up-circle"></i>
-                <strong>Yukaridan bir personel sec.</strong>
-                <span>Secimden sonra gorevler tarih gruplari halinde burada gorunecek.</span>
-            </div>`;
-        document.getElementById('taskCount').textContent = '0 gorev';
-        document.getElementById('planningTaskInline').textContent = '0';
-        document.getElementById('planningTaskMeta').textContent = '0';
-        document.getElementById('planningSelectedPersonnel').textContent = 'Henuz secilmedi';
-        document.getElementById('planningStatusPill').textContent = 'Secim bekleniyor';
-        document.getElementById('planningStatusPill').className = 'planning-pill';
+        renderEmptyPersonnelState();
+        setPlanningStatus('Hazır');
         return;
     }
 
-    document.getElementById('planningSelectedPersonnel').textContent = select.options[select.selectedIndex].text;
-    document.getElementById('planningStatusPill').textContent = 'Yukleniyor';
-    document.getElementById('planningStatusPill').className = 'planning-pill warning';
+    const selectedName = select.options[select.selectedIndex]?.text || 'Personel seçilmedi';
+    document.getElementById('planningSelectedPersonnel').textContent = selectedName;
+    document.getElementById('departmentTitle').textContent = 'Görev Planlaması';
+    document.getElementById('taskCount').textContent = '0 görev';
+    setPlanningStatus('Yükleniyor', 'warning');
 
-    area.innerHTML = '<div class="planning-empty"><i class="bi bi-arrow-repeat"></i><strong>Gorevler yukleniyor...</strong></div>';
+    area.innerHTML = `
+        <div class="planning-empty-state" style="grid-column: 1 / -1;">
+            <i class="bi bi-arrow-repeat"></i>
+            <strong>Görevler yükleniyor...</strong>
+        </div>
+    `;
 
-    fetch(`/api/planning/personnel/${currentPersonelNo}/tasks`)
+    fetch(`/api/planning/personnel/${encodeURIComponent(currentPersonelNo)}/tasks`)
         .then((r) => r.json())
         .then((data) => {
             if (!data.success) {
-                area.innerHTML = '<div class="alert alert-danger">Gorevler yuklenemedi.</div>';
+                area.innerHTML = '<div class="alert alert-danger" style="grid-column: 1 / -1;">Görevler yüklenemedi.</div>';
+                setPlanningStatus('Hata', 'danger');
                 return;
             }
 
             const tasks = data.data || [];
-            document.getElementById('taskCount').textContent = `${formatNumber(tasks.length)} gorev`;
-            document.getElementById('planningTaskInline').textContent = formatNumber(tasks.length);
-            document.getElementById('planningTaskMeta').textContent = formatNumber(tasks.length);
-            document.getElementById('planningStatusPill').textContent = tasks.length ? 'Akis aktif' : 'Bos plan';
-            document.getElementById('planningStatusPill').className = tasks.length ? 'planning-pill success' : 'planning-pill';
-
-            if (!tasks.length) {
-                area.innerHTML = `
-                    <div class="planning-empty">
-                        <i class="bi bi-inbox"></i>
-                        <strong>Bu personele atanmis gorev yok.</strong>
-                        <span>Yeni bir tarih kutusu ekleyebilir veya baska personel secebilirsin.</span>
-                    </div>`;
-                setPlanningStamp();
-                return;
-            }
-
-            const groups = {};
-            tasks.forEach((task) => {
-                const rawDate = (task.GorevBaslamaTarihi || '').substring(0, 10) || 'Tarihsiz';
-                if (!groups[rawDate]) groups[rawDate] = [];
-                groups[rawDate].push(task);
-            });
-
-            const html = Object.keys(groups).sort().map((rawDate) => {
-                const taskList = groups[rawDate];
-                const totalAmount = taskList.reduce((sum, task) => sum + (parseInt(task.Adet, 10) || 0), 0);
-
-                const cards = taskList.map((task) => {
-                    const amount = parseInt(task.Adet, 10) || 0;
-                    const pending = parseInt(task.BekleyenAdet, 10) || 0;
-                    const approved = task.Onay === 'true' || task.Onay === '1' || task.Onay === 1;
-                    const approvalBadge = approved
-                        ? '<span class="planning-pill success">Tamamlandi</span>'
-                        : '<span class="planning-pill warning">Bekliyor</span>';
-
-                    return `
-                        <div class="planning-task-card" id="task-${task.No}">
-                            <div>
-                                <div class="planning-task-title">${escapeHtml(task.AraUrunAdi || 'Bilinmiyor')}</div>
-                                <div class="planning-task-meta">
-                                    <i class="bi bi-diagram-3 me-1"></i>${escapeHtml(task.BolumAdi || '-')}
-                                    &nbsp;|&nbsp;
-                                    Adet: <strong>${formatNumber(amount)}</strong>
-                                    &nbsp;|&nbsp;
-                                    Bekleyen: <strong>${formatNumber(pending)}</strong>
-                                    &nbsp;|&nbsp;
-                                    ${approvalBadge}
-                                </div>
-                            </div>
-                            <div class="planning-task-actions">
-                                <button class="btn btn-outline-success btn-sm" onclick="incrementTask(${task.No})" title="Adet +1">
-                                    <i class="bi bi-plus"></i>
-                                </button>
-                                <button class="btn btn-outline-warning btn-sm" onclick="decrementTask(${task.No})" title="Adet -1">
-                                    <i class="bi bi-dash"></i>
-                                </button>
-                                <button class="btn btn-outline-secondary btn-sm" onclick="openDateModal(${task.No})" title="Tarih degistir">
-                                    <i class="bi bi-calendar-event"></i>
-                                </button>
-                                <button class="btn btn-outline-danger btn-sm" onclick="deleteTask(${task.No})" title="Gorevi sil">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                return `
-                    <div class="planning-date-group" data-date="${rawDate}">
-                        <div class="planning-date-header">
-                            <span class="planning-date-label"><i class="bi bi-calendar-date me-1"></i>${formatDateLabel(rawDate)}</span>
-                            <span class="planning-pill">${formatNumber(taskList.length)} gorev</span>
-                            <span class="planning-pill success">${formatNumber(totalAmount)} adet</span>
-                        </div>
-                        <div class="planning-task-groups">${cards}</div>
-                    </div>
-                `;
-            }).join('');
-
-            area.innerHTML = html;
+            renderTaskBoard(tasks);
             setPlanningStamp();
+            setPlanningStatus(tasks.length ? 'Akış aktif' : 'Boş plan', tasks.length ? 'success' : '');
         })
         .catch(() => {
-            area.innerHTML = '<div class="alert alert-danger">Gorevler yuklenirken hata olustu.</div>';
-            document.getElementById('planningStatusPill').textContent = 'Hata';
-            document.getElementById('planningStatusPill').className = 'planning-pill danger';
+            area.innerHTML = '<div class="alert alert-danger" style="grid-column: 1 / -1;">Görevler yüklenirken hata oluştu.</div>';
+            setPlanningStatus('Hata', 'danger');
         });
 }
 
+function renderEmptyPersonnelState() {
+    document.getElementById('departmentTitle').textContent = 'Görev Planlaması';
+    document.getElementById('planningSelectedPersonnel').textContent = 'Personel seçilmedi';
+    document.getElementById('taskCount').textContent = '0 görev';
+    document.getElementById('personelTasksArea').innerHTML = `
+        <div class="planning-empty-state" style="grid-column: 1 / -1;">
+            <i class="bi bi-arrow-up-circle"></i>
+            <strong>Personel Seçin</strong>
+        </div>
+    `;
+}
+
+function renderTaskBoard(tasks) {
+    const area = document.getElementById('personelTasksArea');
+    const groups = new Map();
+    const firstDepartment = tasks.find((task) => task.BolumAdi)?.BolumAdi || '';
+
+    tasks.forEach((task) => {
+        const info = normalizeDateInfo(task.GorevBaslamaTarihi);
+        if (!groups.has(info.key)) {
+            groups.set(info.key, { info, tasks: [] });
+        }
+
+        groups.get(info.key).tasks.push(task);
+    });
+
+    pendingEmptyDateKeys.forEach((isoDate) => {
+        const info = normalizeDateInfo(isoDate);
+        if (!groups.has(info.key)) {
+            groups.set(info.key, { info, tasks: [] });
+        }
+    });
+
+    document.getElementById('departmentTitle').textContent = firstDepartment ? `${firstDepartment} Bölümü` : 'Görev Planlaması';
+    document.getElementById('taskCount').textContent = `${formatNumber(tasks.length)} görev`;
+
+    if (!groups.size) {
+        area.innerHTML = `
+            <div class="planning-empty-state" style="grid-column: 1 / -1;">
+                <i class="bi bi-inbox"></i>
+                <strong>Bu personele atanmış görev yok.</strong>
+            </div>
+        `;
+        return;
+    }
+
+    const html = Array.from(groups.values())
+        .sort((a, b) => dateSortValue(a.info) - dateSortValue(b.info))
+        .map(renderDateColumn)
+        .join('');
+
+    area.innerHTML = html;
+    bindPlanningDragDrop();
+}
+
+function renderDateColumn(group) {
+    const totalAmount = group.tasks.reduce((sum, task) => {
+        const ready = parseInt(task.Adet, 10) || 0;
+        const waiting = parseInt(task.BekleyenAdet, 10) || 0;
+        return sum + ready + waiting;
+    }, 0);
+    const cards = group.tasks.length
+        ? group.tasks.map(renderTaskCard).join('')
+        : '<div class="planning-date-empty">Boş</div>';
+
+    return `
+        <article class="planning-date-column" data-date-key="${escapeHtml(group.info.key)}" data-iso-date="${escapeHtml(group.info.iso)}">
+            <div class="planning-date-header">
+                <div class="planning-date-label">${escapeHtml(group.info.label)}</div>
+                <div class="planning-date-stats">
+                    <span class="planning-chip">${formatNumber(group.tasks.length)} görev</span>
+                    <span class="planning-chip">${formatNumber(totalAmount)} adet</span>
+                </div>
+            </div>
+            <div class="planning-task-list">${cards}</div>
+        </article>
+    `;
+}
+
+function renderTaskCard(task) {
+    const id = Number(task.No || 0);
+    const amount = parseInt(task.Adet, 10) || 0;
+    const pending = parseInt(task.BekleyenAdet, 10) || 0;
+    const approved = isApproved(task.Onay);
+    const state = planningTaskState(task, amount, pending);
+    const canIncrease = !approved;
+    const canDecrease = amount > 0;
+    const dependencyButton = pending > 0
+        ? `<button class="planning-icon-btn is-info" type="button" onclick="openPlanningDependencyInfo(${id})" title="Bekleme detayını gör">
+                <i class="bi bi-info-circle"></i>
+            </button>`
+        : '';
+
+    return `
+        <div class="planning-task-card ${state.className}" id="task-${id}" data-task-id="${id}" draggable="true">
+            <div class="planning-task-copy">
+                <strong>Ara Ürün:</strong> ${escapeHtml(task.AraUrunAdi || 'Bilinmiyor')}<br>
+                <strong>Adet:</strong> ${formatNumber(amount)}
+                <strong>Bekleyen:</strong> ${formatNumber(pending)}
+            </div>
+            <div class="planning-task-status">
+                <i class="bi ${state.icon}"></i>${escapeHtml(state.label)}
+            </div>
+            <div class="planning-task-actions">
+                ${dependencyButton}
+                <button class="planning-icon-btn is-transfer" type="button" onclick="openTransferModal(${id})" title="Başka personele aktar">
+                    <i class="bi bi-person-up"></i>
+                </button>
+                <button class="planning-icon-btn" type="button" onclick="incrementTask(${id})" title="Adet +1" ${canIncrease ? '' : 'disabled'}>
+                    <i class="bi bi-chevron-up"></i>
+                </button>
+                <button class="planning-icon-btn" type="button" onclick="decrementTask(${id})" title="Adet -1" ${canDecrease ? '' : 'disabled'}>
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+                <button class="planning-icon-btn" type="button" onclick="openDateModal(${id})" title="Tarih değiştir">
+                    <i class="bi bi-calendar-event"></i>
+                </button>
+                <button class="planning-icon-btn is-pool-return" type="button" onclick="returnToPool(${id})" title="Havuza iade et">
+                    <i class="bi bi-box-arrow-in-left"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function planningTaskState(task, amount, pending) {
+    if (isActiveProduction(task.Onay)) {
+        return {
+            className: 'is-active',
+            icon: 'bi-play-circle',
+            label: 'Üretimde',
+        };
+    }
+
+    if (amount > 0) {
+        return {
+            className: 'is-available',
+            icon: 'bi-check-circle',
+            label: pending > 0 ? 'Kısmi kabul edilebilir' : 'Kabul edilebilir',
+        };
+    }
+
+    if (pending > 0) {
+        return {
+            className: 'is-blocked',
+            icon: 'bi-exclamation-triangle',
+            label: 'Alt parça bekliyor',
+        };
+    }
+
+    return {
+        className: 'is-neutral',
+        icon: 'bi-clock',
+        label: 'Plan bekliyor',
+    };
+}
+
+function buildPlanningDependencyInfoHtml(data) {
+    const shortages = Array.isArray(data?.shortages) ? data.shortages : [];
+    const task = data?.task || {};
+
+    if (!shortages.length) {
+        return `
+            <div class="planning-dependency-modal">
+                <p class="planning-dependency-empty mb-0">
+                    Bu görev için aktif alt parça eksiği bulunamadı. Stok veya planlama bilgisi yenilenmiş olabilir.
+                </p>
+            </div>
+        `;
+    }
+
+    const shortageHtml = shortages.map((shortage) => {
+        const componentNo = Number(shortage.component_no || 0);
+        const suppliers = Array.isArray(shortage.suppliers) ? shortage.suppliers : [];
+        const poolRows = Array.isArray(shortage.pool) ? shortage.pool : [];
+        const supplierHtml = suppliers.length
+            ? suppliers.map((supplier) => {
+                const canNotify = supplier.can_notify === true || Number(supplier.can_notify || 0) === 1;
+                const expectedQuantity = Number(supplier.expected_quantity || 0);
+                const notifyButton = canNotify
+                    ? `<button type="button" class="btn btn-outline-primary btn-sm mt-2 planning-dependency-notify-btn" data-component-no="${componentNo}" data-supplier-task-no="${Number(supplier.task_no || 0)}"><i class="bi bi-bell me-1"></i>Bildirim gönder</button>`
+                    : '';
+
+                return `
+                    <div class="planning-dependency-person">
+                        <div class="planning-dependency-person-head">
+                            <div>
+                                <strong>${escapeHtml(supplier.personnel_name || 'Personel')}</strong>
+                                <small>${escapeHtml(supplier.department_name || supplier.status || 'Açık görev')}</small>
+                            </div>
+                            <span class="soft-badge warning">${formatNumber(expectedQuantity > 0 ? expectedQuantity : Number(supplier.open_quantity || 0))} adet</span>
+                        </div>
+                        <p>${escapeHtml(supplier.status || 'Açık görev')} · Açık: ${formatNumber(supplier.open_quantity)} · Hazır: ${formatNumber(supplier.ready_quantity)} · Bekleyen: ${formatNumber(supplier.waiting_quantity)}</p>
+                        <p>${escapeHtml(supplier.wait_reason || 'Personelin üretim girişi bekleniyor.')}</p>
+                        ${notifyButton}
+                        <div class="planning-dependency-notice small mt-2" aria-live="polite"></div>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="planning-dependency-empty">Bu parça için personelde açık üretim bulunamadı.</div>';
+
+        const poolHtml = poolRows.length
+            ? `<div class="planning-dependency-empty">Havuzda atama bekleyen ${formatNumber(poolRows.reduce((sum, row) => sum + Number(row.open_quantity || 0), 0))} adet açık iş var.</div>`
+            : '';
+
+        return `
+            <div class="planning-dependency-block">
+                <h4>${escapeHtml(shortage.component_name || 'Alt parça')}</h4>
+                <div class="planning-dependency-summary">
+                    <span>Gerekli<strong>${formatNumber(shortage.required_quantity)} adet</strong></span>
+                    <span>Eksik<strong>${formatNumber(shortage.missing_quantity)} adet</strong></span>
+                    <span>Stok<strong>${formatNumber(shortage.stock_quantity)} adet</strong></span>
+                    <span>Kullanılabilir<strong>${formatNumber(shortage.usable_quantity)} adet</strong></span>
+                </div>
+                <h4>Kimden gelecek?</h4>
+                ${supplierHtml}
+                ${poolHtml}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="planning-dependency-modal">
+            <p class="mb-2">
+                <strong>${escapeHtml(task.component_name || 'Görev')}</strong>
+                ${task.personnel_name ? `· ${escapeHtml(task.personnel_name)}` : ''}
+                ${Number(task.quantity_checked || 0) > 0 ? `· ${formatNumber(task.quantity_checked)} adet kontrol edildi.` : ''}
+            </p>
+            ${shortageHtml}
+        </div>
+    `;
+}
+
+function openPlanningDependencyInfo(taskId) {
+    const id = Number(taskId || 0);
+    if (!id) return;
+
+    Swal.fire({
+        title: 'Bekleme detayı',
+        html: '<div class="planning-dependency-empty">Bağımlılık bilgisi yükleniyor...</div>',
+        showConfirmButton: false,
+        allowOutsideClick: false,
+    });
+
+    fetch(`/api/planning/task/${id}/dependency-info`, { headers: { 'Accept': 'application/json' } })
+        .then((response) => response.json().catch(() => ({})).then((payload) => ({ ok: response.ok, payload })))
+        .then(({ ok, payload }) => {
+            if (!ok || !payload.success) {
+                throw new Error(payload.message || 'Bekleme detayı alınamadı.');
+            }
+
+            Swal.fire({
+                title: 'Bekleme detayı',
+                html: buildPlanningDependencyInfoHtml(payload),
+                confirmButtonText: 'Kapat',
+                confirmButtonColor: '#0d9488',
+                width: 660,
+                didOpen: (popup) => {
+                    popup.querySelectorAll('.planning-dependency-notify-btn').forEach((button) => {
+                        button.addEventListener('click', () => {
+                            sendPlanningDependencyNotification(
+                                id,
+                                button.getAttribute('data-component-no'),
+                                button.getAttribute('data-supplier-task-no'),
+                                button
+                            );
+                        });
+                    });
+                }
+            });
+        })
+        .catch((error) => {
+            Swal.fire('Hata', error.message || 'Bekleme detayı alınamadı.', 'error');
+        });
+}
+
+function sendPlanningDependencyNotification(taskId, componentNo, supplierTaskNo, button = null) {
+    const notice = button?.closest('.planning-dependency-person')?.querySelector('.planning-dependency-notice') || null;
+    const originalHtml = button?.innerHTML || '';
+
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Gönderiliyor';
+    }
+    if (notice) {
+        notice.className = 'planning-dependency-notice small mt-2 text-muted';
+        notice.textContent = '';
+    }
+
+    return fetch(`/api/planning/task/${Number(taskId || 0)}/notify-dependency`, {
+        method: 'POST',
+        headers: csrfHeaders({
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }),
+        body: JSON.stringify({
+            component_no: Number(componentNo || 0),
+            supplier_task_no: Number(supplierTaskNo || 0)
+        })
+    })
+        .then((response) => response.json().catch(() => ({})).then((payload) => ({ ok: response.ok, payload })))
+        .then(({ ok, payload }) => {
+            if (!ok || !payload.success) {
+                throw new Error(payload.message || 'Bildirim gönderilemedi.');
+            }
+
+            if (button) {
+                button.classList.remove('btn-outline-primary');
+                button.classList.add(payload.already_sent ? 'btn-outline-secondary' : 'btn-success');
+                button.innerHTML = payload.already_sent
+                    ? '<i class="bi bi-check2 me-1"></i>Daha önce gönderildi'
+                    : '<i class="bi bi-check2 me-1"></i>Gönderildi';
+            }
+            if (notice) {
+                notice.className = 'planning-dependency-notice small mt-2 text-success';
+                notice.textContent = payload.message || 'Bildirim gönderildi.';
+            }
+        })
+        .catch((error) => {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+            }
+            if (notice) {
+                notice.className = 'planning-dependency-notice small mt-2 text-danger';
+                notice.textContent = error.message || 'Bildirim gönderilemedi.';
+            } else {
+                Swal.fire('Hata', error.message || 'Bildirim gönderilemedi.', 'error');
+            }
+        });
+}
+
+function bindPlanningDragDrop() {
+    document.querySelectorAll('.planning-task-card').forEach((card) => {
+        card.addEventListener('dragstart', (event) => {
+            event.dataTransfer.setData('text/plain', card.dataset.taskId);
+            card.classList.add('is-dragging');
+        });
+
+        card.addEventListener('dragend', () => {
+            card.classList.remove('is-dragging');
+        });
+    });
+
+    document.querySelectorAll('.planning-date-column').forEach((column) => {
+        column.addEventListener('dragover', (event) => {
+            if (!column.dataset.isoDate) return;
+            event.preventDefault();
+            column.classList.add('is-drop-target');
+        });
+
+        column.addEventListener('dragleave', () => {
+            column.classList.remove('is-drop-target');
+        });
+
+        column.addEventListener('drop', (event) => {
+            event.preventDefault();
+            column.classList.remove('is-drop-target');
+            const taskId = event.dataTransfer.getData('text/plain');
+            const newDate = column.dataset.isoDate;
+            const draggedCard = document.querySelector(`.planning-task-card[data-task-id="${escapeCssValue(taskId)}"]`);
+            const oldDate = draggedCard?.closest('.planning-date-column')?.dataset.isoDate || '';
+
+            if (!taskId || !newDate) return;
+            if (oldDate) pendingEmptyDateKeys.add(oldDate);
+            updateTaskDate(taskId, newDate, true);
+        });
+    });
+}
+
+function lockTaskCard(taskId) {
+    const card = document.getElementById(`task-${taskId}`);
+    if (!card) return false;
+    if (card.dataset.locked === '1') return true; // already locked
+    card.dataset.locked = '1';
+    card.style.opacity = '0.6';
+    card.querySelectorAll('.planning-icon-btn').forEach((btn) => { btn.disabled = true; });
+    return false;
+}
+
+function unlockTaskCard(taskId) {
+    const card = document.getElementById(`task-${taskId}`);
+    if (!card) return;
+    delete card.dataset.locked;
+    card.style.opacity = '';
+    card.querySelectorAll('.planning-icon-btn').forEach((btn) => { btn.disabled = false; });
+}
+
 function incrementTask(taskId) {
+    if (lockTaskCard(taskId)) return;
+
     fetch(`/api/planning/increment/${taskId}`, {
         method: 'POST',
-        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+        headers: csrfHeaders()
     })
         .then((r) => r.json())
         .then((data) => {
             if (!data.success) {
-                Swal.fire('Hata', data.message || 'Islem tamamlanamadi.', 'error');
+                unlockTaskCard(taskId);
+                Swal.fire('Hata', data.message || 'İşlem tamamlanamadı.', 'error');
                 return;
             }
 
             loadPersonelTasks();
         })
-        .catch((error) => Swal.fire('Hata', String(error), 'error'));
+        .catch((error) => {
+            unlockTaskCard(taskId);
+            Swal.fire('Hata', String(error), 'error');
+        });
 }
 
 function decrementTask(taskId) {
+    if (lockTaskCard(taskId)) return;
+
     fetch(`/api/planning/decrement/${taskId}`, {
         method: 'POST',
-        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+        headers: csrfHeaders()
     })
         .then((r) => r.json())
         .then((data) => {
             if (!data.success) {
-                Swal.fire('Hata', data.message || 'Islem tamamlanamadi.', 'error');
+                unlockTaskCard(taskId);
+                Swal.fire('Hata', data.message || 'İşlem tamamlanamadı.', 'error');
                 return;
             }
 
             loadPersonelTasks();
         })
-        .catch((error) => Swal.fire('Hata', String(error), 'error'));
+        .catch((error) => {
+            unlockTaskCard(taskId);
+            Swal.fire('Hata', String(error), 'error');
+        });
 }
 
 function deleteTask(taskId) {
+    returnToPool(taskId);
+}
+
+function returnToPool(taskId) {
+    if (lockTaskCard(taskId)) return;
+
     Swal.fire({
-        title: 'Gorev silinsin mi?',
-        text: 'Bu gorev havuza geri aktarilacak.',
-        icon: 'warning',
+        title: '<i class="bi bi-box-arrow-in-left" style="color:#6366f1;margin-right:6px"></i> Havuza İade',
+        html: '<div style="text-align:left;font-size:0.92rem;color:var(--z-text-secondary)">' +
+              'Bu görev personelden alınıp <strong>iş emri havuzuna</strong> geri aktarılacak.<br>' +
+              '<small style="opacity:0.7">Havuzdan tekrar başka bir personele atanabilir.</small></div>',
+        icon: 'question',
         showCancelButton: true,
-        confirmButtonText: 'Evet, sil',
-        cancelButtonText: 'Vazgec',
+        confirmButtonText: '<i class="bi bi-check-lg"></i> Evet, havuza iade et',
+        cancelButtonText: 'Vazgeç',
+        confirmButtonColor: '#6366f1',
+        focusCancel: true,
     }).then((result) => {
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed) {
+            unlockTaskCard(taskId);
+            return;
+        }
 
         fetch(`/api/planning/task/${taskId}`, {
             method: 'DELETE',
-            headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+            headers: csrfHeaders()
         })
             .then((r) => r.json())
             .then((data) => {
                 if (!data.success) {
-                    Swal.fire('Hata', data.message || 'Gorev silinemedi.', 'error');
+                    unlockTaskCard(taskId);
+                    Swal.fire('Hata', data.message || 'İade işlemi başarısız.', 'error');
                     return;
                 }
 
+                Swal.fire({
+                    title: 'Havuza İade Edildi',
+                    text: data.message || 'Görev başarıyla havuza aktarıldı.',
+                    icon: 'success',
+                    timer: 1800,
+                    showConfirmButton: false,
+                });
                 loadPersonelTasks();
             })
-            .catch((error) => Swal.fire('Hata', String(error), 'error'));
+            .catch((error) => {
+                unlockTaskCard(taskId);
+                Swal.fire('Hata', String(error), 'error');
+            });
     });
 }
+
+function openTransferModal(taskId) {
+    if (lockTaskCard(taskId)) return;
+
+    Swal.fire({
+        title: '<i class="bi bi-person-up" style="color:#d97706;margin-right:6px"></i> Görev Aktarma',
+        html: '<div style="text-align:center;padding:16px 0"><i class="bi bi-arrow-repeat" style="font-size:1.5rem;color:var(--z-text-secondary);animation:spin 1s linear infinite"></i><br><small style="color:var(--z-text-secondary)">Personel listesi yükleniyor…</small></div>',
+        showConfirmButton: false,
+        showCancelButton: true,
+        cancelButtonText: 'Kapat',
+        didOpen: () => {
+            fetch(`/api/planning/task/${taskId}/transfer-options`, {
+                headers: csrfHeaders()
+            })
+                .then((r) => r.json())
+                .then((data) => {
+                    if (!data.success) {
+                        Swal.update({
+                            html: `<div style="color:#dc2626;padding:12px"><i class="bi bi-exclamation-triangle"></i> ${escapeHtml(data.message || 'Bilgiler yüklenemedi.')}</div>`,
+                        });
+                        return;
+                    }
+
+                    const task = data.task;
+                    const personnel = data.available_personnel || [];
+                    const totalQty = task.total_quantity || 0;
+                    const dateStr = task.date ? task.date.substring(0, 10) : '—';
+
+                    let personnelOptions = '<option value="" disabled selected>Personel seçin…</option>';
+                    personnel.forEach((p) => {
+                        personnelOptions += `<option value="${p.PersonelNo}">${escapeHtml(p.PersonelAdi || 'Personel #' + p.PersonelNo)}</option>`;
+                    });
+
+                    const noPersonnelMsg = personnel.length === 0
+                        ? '<div style="color:#d97706;font-size:0.82rem;margin-top:6px"><i class="bi bi-exclamation-triangle"></i> Bu bölümde aktarılabilecek başka personel bulunamadı.</div>'
+                        : '';
+
+                    const html = `
+                        <div class="transfer-modal">
+                            <div class="transfer-task-info">
+                                <div class="transfer-info-row">
+                                    <span class="transfer-label">Ara Ürün</span>
+                                    <span class="transfer-value">${escapeHtml(task.component_name || '—')}</span>
+                                </div>
+                                <div class="transfer-info-row">
+                                    <span class="transfer-label">Bölüm</span>
+                                    <span class="transfer-value">${escapeHtml(task.department_name || '—')}</span>
+                                </div>
+                                <div class="transfer-info-row">
+                                    <span class="transfer-label">Mevcut Personel</span>
+                                    <span class="transfer-value">${escapeHtml(task.personnel_name || '—')}</span>
+                                </div>
+                                <div class="transfer-info-row">
+                                    <span class="transfer-label">Toplam Adet</span>
+                                    <span class="transfer-value">${formatNumber(totalQty)}</span>
+                                </div>
+                                <div class="transfer-info-row">
+                                    <span class="transfer-label">Tarih</span>
+                                    <span class="transfer-value">${escapeHtml(dateStr)}</span>
+                                </div>
+                            </div>
+
+                            <div class="transfer-section-label">Hedef Personel</div>
+                            <select id="transferTargetSelect" class="transfer-personnel-select" ${personnel.length === 0 ? 'disabled' : ''}>
+                                ${personnelOptions}
+                            </select>
+                            ${noPersonnelMsg}
+
+                            <div class="transfer-divider">veya</div>
+
+                            <button type="button" class="transfer-pool-btn" onclick="executeReturnToPoolFromModal(${taskId})">
+                                <i class="bi bi-box-arrow-in-left"></i> Havuza İade Et
+                            </button>
+                        </div>
+                    `;
+
+                    Swal.update({
+                        html: html,
+                        showConfirmButton: personnel.length > 0,
+                        confirmButtonText: '<i class="bi bi-person-check"></i> Aktar',
+                        confirmButtonColor: '#d97706',
+                    });
+
+                    // Confirm handler for transfer
+                    const confirmBtn = Swal.getConfirmButton();
+                    if (confirmBtn) {
+                        confirmBtn.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const select = document.getElementById('transferTargetSelect');
+                            if (!select || !select.value) {
+                                Swal.showValidationMessage('Lütfen hedef personel seçin.');
+                                return;
+                            }
+                            executeTransfer(taskId, parseInt(select.value, 10));
+                        });
+                    }
+                })
+                .catch((error) => {
+                    Swal.update({
+                        html: `<div style="color:#dc2626;padding:12px"><i class="bi bi-exclamation-triangle"></i> Bağlantı hatası: ${escapeHtml(String(error))}</div>`,
+                    });
+                });
+        },
+        willClose: () => {
+            unlockTaskCard(taskId);
+        },
+    });
+}
+
+function executeTransfer(taskId, targetPersonnelNo) {
+    Swal.fire({
+        title: 'Aktarılıyor…',
+        html: '<i class="bi bi-arrow-repeat" style="font-size:1.3rem;animation:spin 1s linear infinite"></i>',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+    });
+
+    fetch(`/api/planning/task/${taskId}/transfer`, {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ target_personnel_no: targetPersonnelNo }),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (!data.success) {
+                Swal.fire('Hata', data.message || 'Aktarma başarısız.', 'error');
+                return;
+            }
+
+            Swal.fire({
+                title: 'Aktarıldı!',
+                text: data.message || 'Görev başarıyla aktarıldı.',
+                icon: 'success',
+                timer: 2000,
+                showConfirmButton: false,
+            });
+            loadPersonelTasks();
+        })
+        .catch((error) => Swal.fire('Hata', String(error), 'error'));
+}
+
+function executeReturnToPoolFromModal(taskId) {
+    Swal.fire({
+        title: 'Havuza iade ediliyor…',
+        html: '<i class="bi bi-arrow-repeat" style="font-size:1.3rem;animation:spin 1s linear infinite"></i>',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+    });
+
+    fetch(`/api/planning/task/${taskId}`, {
+        method: 'DELETE',
+        headers: csrfHeaders(),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (!data.success) {
+                Swal.fire('Hata', data.message || 'İade başarısız.', 'error');
+                return;
+            }
+
+            Swal.fire({
+                title: 'Havuza İade Edildi',
+                text: data.message || 'Görev havuza aktarıldı.',
+                icon: 'success',
+                timer: 1800,
+                showConfirmButton: false,
+            });
+            loadPersonelTasks();
+        })
+        .catch((error) => Swal.fire('Hata', String(error), 'error'));
+}
+
 
 function openDateModal(taskId) {
     document.getElementById('modalTaskId').value = taskId;
@@ -545,63 +1551,71 @@ function submitDateChange() {
     const newDate = document.getElementById('modalNewDate').value;
 
     if (!newDate) {
-        Swal.fire('Eksik tarih', 'Lutfen bir tarih secin.', 'warning');
+        Swal.fire('Eksik tarih', 'Lütfen bir tarih seçin.', 'warning');
         return;
     }
 
+    updateTaskDate(taskId, newDate, false);
+}
+
+function updateTaskDate(taskId, newDate, fromDrag) {
+    setPlanningStatus('Tarih kaydediliyor', 'warning');
+
     fetch(`/api/planning/task/${taskId}/date`, {
         method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ date: newDate })
     })
         .then((r) => r.json())
         .then((data) => {
-            bootstrap.Modal.getInstance(document.getElementById('dateModal')).hide();
+            const modal = bootstrap.Modal.getInstance(document.getElementById('dateModal'));
+            if (modal) modal.hide();
+
             if (!data.success) {
-                Swal.fire('Hata', data.message || 'Tarih guncellenemedi.', 'error');
+                setPlanningStatus('Hata', 'danger');
+                Swal.fire('Hata', data.message || 'Tarih güncellenemedi.', 'error');
+                loadPersonelTasks();
                 return;
+            }
+
+            if (fromDrag) {
+                pendingEmptyDateKeys.add(newDate);
             }
 
             loadPersonelTasks();
         })
-        .catch((error) => Swal.fire('Hata', String(error), 'error'));
+        .catch((error) => {
+            setPlanningStatus('Hata', 'danger');
+            Swal.fire('Hata', String(error), 'error');
+        });
 }
 
 function tarihKutusuEkle() {
     const date = document.getElementById('yeniTarih').value;
     if (!date) {
-        Swal.fire('Eksik tarih', 'Lutfen bir tarih secin.', 'warning');
+        Swal.fire('Eksik tarih', 'Lütfen bir tarih seçin.', 'warning');
+        return;
+    }
+
+    pendingEmptyDateKeys.add(date);
+    renderTaskBoardFromCurrentDom(date);
+}
+
+function renderTaskBoardFromCurrentDom(date) {
+    const existing = document.querySelector(`.planning-date-column[data-iso-date="${escapeCssValue(date)}"]`);
+    if (existing) {
+        existing.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+    }
+
+    if (currentPersonelNo) {
+        loadPersonelTasks();
         return;
     }
 
     const area = document.getElementById('personelTasksArea');
-    const existing = area.querySelector(`[data-date="${date}"]`);
-    if (existing) {
-        existing.scrollIntoView({ behavior: 'smooth' });
-        return;
-    }
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'planning-date-group';
-    wrapper.setAttribute('data-date', date);
-    wrapper.innerHTML = `
-        <div class="planning-date-header">
-            <span class="planning-date-label"><i class="bi bi-calendar-date me-1"></i>${formatDateLabel(date)}</span>
-            <span class="planning-pill">0 gorev</span>
-        </div>
-        <div class="text-muted small">Bu tarihe gorev tasinabilir veya yeni gorevler bu gune planlanabilir.</div>
-    `;
-
-    const empty = area.querySelector('.planning-empty');
-    if (empty) {
-        area.innerHTML = '';
-    }
-
-    area.prepend(wrapper);
-    wrapper.scrollIntoView({ behavior: 'smooth' });
+    area.innerHTML = renderDateColumn({ info: normalizeDateInfo(date), tasks: [] });
+    bindPlanningDragDrop();
 }
 
 function loadSummary() {
@@ -616,15 +1630,15 @@ function loadSummary() {
             if (data.kategoriList) {
                 const select = document.getElementById('kategoriFilter');
                 const current = category;
-                select.innerHTML = '<option value="">Tum Kategoriler</option>';
+                select.innerHTML = '<option value="">Tüm Kategoriler</option>';
                 data.kategoriList.forEach((item) => {
-                    select.innerHTML += `<option value="${item}"${item === current ? ' selected' : ''}>${item}</option>`;
+                    select.innerHTML += `<option value="${escapeHtml(item)}"${item === current ? ' selected' : ''}>${escapeHtml(item)}</option>`;
                 });
             }
 
             const rows = data.summary || [];
-            document.getElementById('planningSummaryInline').textContent = formatNumber(rows.length);
-            document.getElementById('planningSummaryBadge').textContent = `${formatNumber(rows.length)} satir`;
+            planningSummaryRows = rows;
+            document.getElementById('planningSummaryBadge').textContent = `${formatNumber(rows.length)} satır`;
 
             if (!rows.length) {
                 document.getElementById('planningBody').innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Veri yok.</td></tr>';
@@ -632,17 +1646,18 @@ function loadSummary() {
                 return;
             }
 
-            document.getElementById('planningBody').innerHTML = rows.map((summary) => {
+            document.getElementById('planningBody').innerHTML = rows.map((summary, index) => {
                 const urgency = summary.EnYakinKargo
-                    ? `<span class="planning-pill warning">${escapeHtml(summary.EnYakinKargo)}</span>`
+                    ? `<span class="planning-chip">${escapeHtml(summary.EnYakinKargo)}</span>`
                     : '-';
                 const status = summary.EslesenUrunNo > 0
-                    ? '<span class="planning-pill success">Eslesmis</span>'
-                    : '<span class="planning-pill danger">Eslesmemis</span>';
+                    ? '<span class="planning-chip">Eşleşmiş</span>'
+                    : '<span class="planning-chip">Eşleşmemiş</span>';
 
                 const producible = Number(summary.UretilebilirAdet || 0);
-                const missing = Math.max(0, Number(summary.ToplamAdet || 0) - producible);
-                const producibleHtml = producible >= Number(summary.ToplamAdet || 0)
+                const total = Number(summary.ToplamAdet || 0);
+                const missing = Math.max(0, total - producible);
+                const producibleHtml = producible >= total
                     ? `<span class="text-success fw-bold">${formatNumber(producible)}</span>`
                     : formatNumber(producible);
                 const missingHtml = missing > 0
@@ -655,14 +1670,14 @@ function loadSummary() {
                             ${escapeHtml(summary.UrunAdi || '-')}
                             ${summary.sistemAdi ? `<br><small class="text-muted">${escapeHtml(summary.sistemAdi)}</small>` : ''}
                         </td>
-                        <td class="text-center fw-bold">${formatNumber(summary.ToplamAdet || 0)}</td>
+                        <td class="text-center fw-bold">${formatNumber(total)}</td>
                         <td class="text-center">${producibleHtml}</td>
                         <td class="text-center">${missingHtml}</td>
                         <td class="text-center">${urgency}</td>
                         <td>${status}</td>
                         <td>
-                            <button class="btn btn-primary btn-sm" onclick="planWorkOrder(${summary.EslesenUrunNo || 0}, ${summary.ToplamAdet || 0}, '${escapeJsString(summary.EslesenUrunTur || '')}', '${escapeJsString(summary.UrunAdi || '')}', '${escapeJsString(selectedDate || '')}')">
-                                <i class="bi bi-play me-1"></i>Is Emri
+                            <button class="btn btn-primary btn-sm" onclick="planWorkOrderByIndex(${index})">
+                                <i class="bi bi-play me-1"></i>İş Emri
                             </button>
                         </td>
                     </tr>
@@ -673,57 +1688,137 @@ function loadSummary() {
         });
 }
 
-function planWorkOrder(urunNo, adet, tur, urunAdi, selectedDate) {
+function planWorkOrderByIndex(index) {
+    const selectedDate = document.getElementById('tarihFilter').value;
+    const summary = planningSummaryRows[index] || {};
+    planWorkOrder(
+        Number(summary.EslesenUrunNo || 0),
+        Number(summary.ToplamAdet || 0),
+        String(summary.EslesenUrunTur || ''),
+        String(summary.UrunAdi || ''),
+        selectedDate,
+        Array.isArray(summary.SatirNolar) ? summary.SatirNolar : []
+    );
+}
+
+function planWorkOrder(urunNo, adet, tur, urunAdi, selectedDate, satirNolar) {
     if (!urunNo || !tur) {
-        Swal.fire('Eksik eslesme', 'Bu urun icin is emri olusturulamiyor; once eslestirme gerekiyor.', 'warning');
+        Swal.fire('Eksik eşleşme', 'Bu ürün için iş emri oluşturulamıyor; önce eşleştirme gerekiyor.', 'warning');
+        return;
+    }
+
+    if (!Array.isArray(satirNolar) || !satirNolar.length) {
+        Swal.fire('Satır bulunamadı', 'Bu özet satırına bağlı sipariş satırı bulunamadı.', 'warning');
         return;
     }
 
     Swal.fire({
-        title: 'Is emri olusturulsun mu?',
+        title: 'İş emri oluşturulsun mu?',
         html: `
             <div class="text-start">
-                <p><strong>Urun:</strong> ${escapeHtml(urunAdi || '-')}</p>
+                <p><strong>Ürün:</strong> ${escapeHtml(urunAdi || '-')}</p>
                 <p><strong>Adet:</strong> ${formatNumber(adet)}</p>
+                <p><strong>Sipariş satırı:</strong> ${formatNumber(satirNolar.length)}</p>
                 <p><strong>Referans tarih:</strong> ${escapeHtml(selectedDate || '-')}</p>
             </div>
         `,
         icon: 'question',
         showCancelButton: true,
-        confirmButtonText: 'Evet, olustur',
-        cancelButtonText: 'Vazgec'
+        confirmButtonText: 'Evet, oluştur',
+        cancelButtonText: 'Vazgeç'
     }).then((result) => {
         if (!result.isConfirmed) return;
+
+        Swal.fire({
+            title: 'İş emri oluşturuluyor...',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading()
+        });
 
         fetch('/SiparisApi.ashx?action=createOrderWorkOrders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                eslesenUrunNo: urunNo,
-                eslesenUrunTur: tur,
-                adet: adet,
+                satirNolar: satirNolar,
+                tur: tur,
                 stokDurum: 'StokDahil'
             })
         })
             .then((r) => r.json())
             .then((data) => {
-                Swal.fire('Islem tamamlandi', data.message || 'Is emri olusturuldu.', 'success');
+                if (!data.success) {
+                    Swal.fire('Hata', data.message || 'İş emri oluşturulamadı.', 'error');
+                    return;
+                }
+
+                const errors = Array.isArray(data.errors) && data.errors.length
+                    ? `<br><small class="text-danger">${data.errors.map((error) => escapeHtml(error)).join('<br>')}</small>`
+                    : '';
+                const created = Number(data.created || 0);
+                Swal.fire({
+                    icon: created > 0 ? 'success' : 'warning',
+                    title: created > 0 ? 'İş Emri Oluşturuldu' : 'İşlem Tamamlandı',
+                    html: `${escapeHtml(data.message || 'İşlem tamamlandı.')}${errors}`,
+                });
                 loadSummary();
             })
-            .catch(() => Swal.fire('Hata', 'Is emri olusturulamadi.', 'error'));
+            .catch(() => Swal.fire('Hata', 'İş emri oluşturulamadı.', 'error'));
     });
+}
+
+function normalizeDateInfo(value) {
+    const text = String(value || '').trim().substring(0, 10);
+    let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+    if (match) {
+        const [, year, month, day] = match;
+        return {
+            key: `${year}-${month}-${day}`,
+            iso: `${year}-${month}-${day}`,
+            label: `${day}/${month}/${year}`,
+        };
+    }
+
+    match = text.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+    if (match) {
+        const [, day, month, year] = match;
+        return {
+            key: `${year}-${month}-${day}`,
+            iso: `${year}-${month}-${day}`,
+            label: `${day}/${month}/${year}`,
+        };
+    }
+
+    return {
+        key: text || 'undated',
+        iso: '',
+        label: text || 'Tarihsiz',
+    };
+}
+
+function dateSortValue(info) {
+    if (!info.iso) return Number.MAX_SAFE_INTEGER;
+    return new Date(`${info.iso}T00:00:00`).getTime();
+}
+
+function isApproved(value) {
+    return ['1', 'true', 'evet', 'yes'].includes(String(value || '').trim().toLowerCase());
+}
+
+function isActiveProduction(value) {
+    return ['0', 'false', 'hayir', 'hayır', 'no'].includes(String(value || '').trim().toLowerCase());
 }
 
 function formatNumber(value) {
     return Number(value || 0).toLocaleString('tr-TR');
 }
 
-function formatDateLabel(rawDate) {
-    if (!rawDate || rawDate === 'Tarihsiz') return 'Tarihsiz';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+function escapeCssValue(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+        return window.CSS.escape(String(value || ''));
+    }
 
-    const [year, month, day] = rawDate.split('-');
-    return `${day}.${month}.${year}`;
+    return String(value || '').replace(/["\\]/g, '\\$&');
 }
 
 function escapeHtml(value) {
@@ -743,21 +1838,7 @@ function escapeJsString(value) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    setPlanningActive('Personel Planlama');
     loadPersonelList();
-
-    document.querySelectorAll('#planningTabs .nav-link').forEach((tab) => {
-        tab.addEventListener('shown.bs.tab', (event) => {
-            const label = event.target.getAttribute('data-bs-target') === '#tabSiparisOzeti'
-                ? 'Siparis Ozeti'
-                : 'Personel Planlama';
-
-            setPlanningActive(label);
-            if (label === 'Siparis Ozeti') {
-                loadSummary();
-            }
-        });
-    });
 });
 </script>
 @endpush

@@ -12,6 +12,7 @@ use App\Http\Controllers\TopluIsEmriApiController;
 use App\Http\Controllers\PersonnelPanelController;
 use App\Http\Controllers\ProductionPlanningController;
 use App\Http\Controllers\WorkOrderCenterController;
+use App\Http\Controllers\WorkOrderPreviewController;
 
 Route::get('/', function () {
     if (!Auth::check()) {
@@ -51,16 +52,83 @@ Route::get('/SifremiUnuttum.aspx', function () { return redirect()->route('passw
 Route::post('/SifremiUnuttum.aspx', [AuthController::class, 'forgotPassword']);
 Route::get('/Hakkimizda.aspx', function () { return redirect()->route('pages.about'); });
 Route::get('/iletisimMisafir.aspx', function () { return redirect()->route('pages.contact'); });
+Route::get('/Resimler/{filename}', function (string $filename) {
+    $safeName = str_replace('\\', '/', rawurldecode($filename));
+    if (str_contains($safeName, '..')) {
+        abort(404);
+    }
+
+    $imageKey = static function (string $value): string {
+        $key = trim($value);
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $key);
+            if ($converted !== false) {
+                $key = $converted;
+            }
+        }
+        $key = strtr($key, [
+            'ç' => 'c', 'Ç' => 'C',
+            'ğ' => 'g', 'Ğ' => 'G',
+            'ı' => 'i', 'I' => 'I',
+            'İ' => 'I', 'ö' => 'o',
+            'Ö' => 'O', 'ş' => 's',
+            'Ş' => 'S', 'ü' => 'u',
+            'Ü' => 'U',
+        ]);
+
+        return preg_replace('/[^a-z0-9.]+/', '', strtolower($key)) ?? '';
+    };
+
+    $resolveImagePath = static function (string $basePath, string $safeName) use ($imageKey): ?string {
+        $path = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $safeName;
+        if (is_file($path) && preg_match('/\.(jpe?g|png|webp|gif)$/i', $path)) {
+            return $path;
+        }
+
+        $directory = dirname($path);
+        if (!is_dir($directory)) {
+            return null;
+        }
+
+        $needle = $imageKey(basename($safeName));
+        foreach (scandir($directory) ?: [] as $entry) {
+            $entryPath = $directory . DIRECTORY_SEPARATOR . $entry;
+            if (!is_file($entryPath) || !preg_match('/\.(jpe?g|png|webp|gif)$/i', $entry)) {
+                continue;
+            }
+
+            if ($imageKey($entry) === $needle) {
+                return $entryPath;
+            }
+        }
+
+        return null;
+    };
+
+    foreach ([public_path('Resimler'), base_path('../zemuretim/Resimler')] as $basePath) {
+        $path = $resolveImagePath($basePath, $safeName);
+        if ($path) {
+            return response()->file($path);
+        }
+    }
+
+    abort(404);
+})->where('filename', '.*')->name('legacy.images');
 
 // ===== Stok API =====
 Route::prefix('api/stocks')->middleware('auth')->group(function () {
-    Route::get('/export', [StocksController::class, 'exportCsv']);
+    Route::get('/export', [StocksController::class, 'exportWorkbook']);
+    Route::get('/movements', [StocksController::class, 'getMovementFeed']);
     Route::get('/', [StocksController::class, 'getStocks']);
     Route::get('/lookups', [StocksController::class, 'getLookups']);
+    Route::get('/{id}/movements/export', [StocksController::class, 'exportMovements'])->whereNumber('id');
+    Route::get('/{id}/movements', [StocksController::class, 'getMovements'])->whereNumber('id');
     Route::post('/', [StocksController::class, 'store']);
     Route::put('/{id}', [StocksController::class, 'update']);
     Route::delete('/{id}', [StocksController::class, 'destroy']);
     Route::post('/reset-buffer', [StocksController::class, 'resetBuffer']);
+    Route::post('/import', [StocksController::class, 'importWorkbook']);
+    Route::post('/import-csv', [StocksController::class, 'importWorkbook']);
 });
 
 // ===== Reports API =====
@@ -70,6 +138,8 @@ Route::prefix('api/reports')->middleware('auth')->group(function () {
     Route::post('/chart-data', [ReportsController::class, 'chartData']);
     Route::get('/tasks', [ReportsController::class, 'getTaskReport']);
     Route::get('/tasks-export', [ReportsController::class, 'exportExcelTasks']);
+    Route::get('/personnel-tasks', [ReportsController::class, 'getPersonnelTaskReport']);
+    Route::get('/personnel-tasks-export', [ReportsController::class, 'exportPersonnelTasks']);
     Route::get('/performance', [ReportsController::class, 'getPerformanceReport']);
 });
 
@@ -77,6 +147,7 @@ Route::prefix('api/reports')->middleware('auth')->group(function () {
 Route::prefix('api/database')->middleware(['auth', 'admin'])->group(function () {
     Route::get('/personnel', [AdminDatabaseController::class, 'getPersonnel']);
     Route::get('/personnel/idle', [AdminDatabaseController::class, 'getIdlePersonnel']);
+    Route::get('/personnel/production-overview', [AdminDatabaseController::class, 'getPersonnelProductionOverview']);
     Route::post('/personnel', [AdminDatabaseController::class, 'storePersonnel']);
     Route::put('/personnel/{id}', [AdminDatabaseController::class, 'updatePersonnel']);
     Route::delete('/personnel/{id}', [AdminDatabaseController::class, 'deletePersonnel']);
@@ -98,12 +169,20 @@ Route::prefix('api/database')->middleware(['auth', 'admin'])->group(function () 
     Route::post('/components', [AdminDatabaseController::class, 'storeComponent']);
     Route::put('/components/{id}', [AdminDatabaseController::class, 'updateComponent']);
     Route::delete('/components/{id}', [AdminDatabaseController::class, 'deleteComponent']);
+    Route::put('/components/{id}/bom-path', [AdminDatabaseController::class, 'updateComponentBomPath']);
+    Route::delete('/components/{id}/bom-path', [AdminDatabaseController::class, 'clearComponentBomPath']);
 
     Route::get('/products', [AdminDatabaseController::class, 'getProducts']);
     Route::post('/products', [AdminDatabaseController::class, 'storeProduct']);
     Route::put('/products/{id}', [AdminDatabaseController::class, 'updateProduct']);
     Route::delete('/products/{id}', [AdminDatabaseController::class, 'deleteProduct']);
     Route::post('/products/{id}/image', [AdminDatabaseController::class, 'uploadProductImage']);
+    Route::post('/{module}/import', [AdminDatabaseController::class, 'importModule'])
+        ->where('module', 'personnel|departments|components|products');
+
+    Route::get('/components/{id}/bom-path-names', [AdminDatabaseController::class, 'getComponentBomPathNames']);
+    Route::get('/products/{id}/bom-path-names', [AdminDatabaseController::class, 'getProductBomPathNames']);
+    Route::post('/derive-product', [AdminDatabaseController::class, 'deriveProduct']);
 
     Route::get('/product-settings/lookups', [AdminDatabaseController::class, 'getProductSettingsLookups']);
     Route::get('/product-settings/{urunNo}', [AdminDatabaseController::class, 'getProductSettingsDetails']);
@@ -115,12 +194,17 @@ Route::prefix('api/panel')->middleware('auth')->group(function () {
     Route::get('/dashboard-stats', [PersonnelPanelController::class, 'dashboardStats']);
     Route::get('/my-tasks', [PersonnelPanelController::class, 'myTasks']);
     Route::get('/task/{id}', [PersonnelPanelController::class, 'taskDetail']);
+    Route::get('/task/{id}/dependency-info', [PersonnelPanelController::class, 'dependencyInfo']);
+    Route::post('/task/{id}/notify-dependency', [PersonnelPanelController::class, 'notifyDependency']);
+    Route::post('/task/{id}/start', [PersonnelPanelController::class, 'startTask']);
     Route::post('/task/{id}/complete', [PersonnelPanelController::class, 'completeProduction']);
     Route::get('/available-tasks', [PersonnelPanelController::class, 'availableTasks']);
     Route::post('/take-task/{id}', [PersonnelPanelController::class, 'takeTask']);
     Route::get('/completed-tasks', [PersonnelPanelController::class, 'completedTasks']);
     Route::get('/task-report', [PersonnelPanelController::class, 'taskReport']);
     Route::get('/assigned-to-me', [PersonnelPanelController::class, 'assignedToMe']);
+    Route::get('/messages/unread-count', [PersonnelPanelController::class, 'unreadMessageCount']);
+    Route::post('/messages/mark-read', [PersonnelPanelController::class, 'markMessagesRead']);
     Route::get('/messages', [PersonnelPanelController::class, 'messages']);
     Route::post('/messages', [PersonnelPanelController::class, 'sendMessage']);
     Route::delete('/messages/{id}', [PersonnelPanelController::class, 'deleteMessage']);
@@ -133,8 +217,12 @@ Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () 
     Route::get('/personnel/{personelNo}/tasks', [ProductionPlanningController::class, 'getPersonnelTasks']);
     Route::post('/increment/{id}', [ProductionPlanningController::class, 'incrementTask']);
     Route::post('/decrement/{id}', [ProductionPlanningController::class, 'decrementTask']);
+    Route::get('/task/{id}/dependency-info', [ProductionPlanningController::class, 'dependencyInfo']);
+    Route::post('/task/{id}/notify-dependency', [ProductionPlanningController::class, 'notifyDependency']);
     Route::delete('/task/{id}', [ProductionPlanningController::class, 'deleteTask']);
     Route::put('/task/{id}/date', [ProductionPlanningController::class, 'updateTaskDate']);
+    Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
+    Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
 });
 
 // ===== Authenticated Personnel Pages =====
@@ -146,17 +234,24 @@ Route::middleware('auth')->group(function () {
     })->name('dashboard');
 
     Route::get('/KullaniciAnaSayfa.aspx', function () {
-        return redirect()->route('user.dashboard');
+        return redirect()->route('user.tasks');
     })->name('legacy.user.dashboard');
+    Route::get('/AlinabilecekGorevler.aspx', function () { return redirect()->route('user.available'); })->name('legacy.user.available');
+    Route::get('/Iletisim.aspx', function () { return redirect()->route('user.messages'); })->name('legacy.user.messages');
+    Route::get('/TamamlananGorevler.aspx', function () {
+        return Auth::user()?->isAdmin()
+            ? redirect()->route('reports.completed')
+            : redirect()->route('user.completed');
+    })->name('legacy.user.completed');
 
     // Personel Paneli Views
-    Route::get('/panel', function () { return view('user.dashboard'); })->name('user.dashboard');
+    Route::get('/panel', function () { return redirect()->route('user.tasks'); })->name('user.dashboard');
     Route::get('/panel/gorevlerim', function () { return view('user.tasks'); })->name('user.tasks');
     Route::get('/panel/gorev/{id}', function ($id) { return view('user.task-detail', ['id' => $id]); })->name('user.task-detail');
     Route::get('/panel/alinabilir', function () { return view('user.available-tasks'); })->name('user.available');
     Route::get('/panel/tamamlanan', function () { return view('user.completed-tasks'); })->name('user.completed');
     Route::get('/panel/rapor', function () { return view('user.task-report'); })->name('user.report');
-    Route::get('/panel/verilen-gorevler', function () { return view('user.assigned-tasks'); })->name('user.assigned');
+    Route::get('/panel/verilen-gorevler', function () { return redirect()->route('user.tasks'); })->name('user.assigned');
     Route::get('/panel/mesajlar', function () { return view('user.messages'); })->name('user.messages');
     Route::get('/panel/sifre-degistir', function () { return view('user.password'); })->name('user.password');
     Route::post('/panel/sifre-degistir', [AuthController::class, 'changePassword'])->name('user.password.update');
@@ -182,9 +277,14 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/UretimBekleyenOzet.aspx', function () { return redirect()->route('production.pending'); });
     Route::get('/UretimPlanlama.aspx', function () { return redirect()->route('production.planning'); });
     Route::get('/PasifDevamEdenler.aspx', function () { return redirect()->route('production.pasif'); });
-    Route::get('/YeniUrunEkle.aspx', function () { return redirect()->route('products.create'); });
-    Route::get('/YeniUrunDuzenle.aspx', function () { return redirect()->route('products.create'); });
+    Route::get('/YeniUrunEkle.aspx', function () {
+        return redirect()->route('products.create', array_merge(request()->query(), ['tab' => 'add']));
+    });
+    Route::get('/YeniUrunDuzenle.aspx', function () {
+        return redirect()->route('products.create', array_merge(request()->query(), ['tab' => 'derive']));
+    });
     Route::get('/PersonelRapor.aspx', function () { return redirect()->route('reports.personnel'); });
+    Route::get('/GorevGoruntuleme.aspx', function () { return redirect()->route('reports.personnel'); });
     Route::get('/GorevRapor.aspx', function () { return redirect()->route('reports.tasks'); });
     Route::get('/sifreYonetici.aspx', function () { return redirect()->route('admin.password'); });
 
@@ -224,6 +324,12 @@ Route::middleware(['auth', 'admin'])->group(function () {
 
     // Raporlar
     Route::get('/personel-rapor', function () { return view('reports.personnel'); })->name('reports.personnel');
+    Route::get('/tamamlanan-gorevler', function () {
+        return view('reports.tasks', [
+            'reportTitle' => 'Tamamlanan Görevler',
+            'reportTableTitle' => 'Tamamlanan görev tablosu',
+        ]);
+    })->name('reports.completed');
     Route::get('/gorev-rapor', function () { return view('reports.tasks'); })->name('reports.tasks');
     Route::get('/isci-performans', function () { return view('reports.performance'); })->name('reports.performance');
 
@@ -236,9 +342,18 @@ Route::middleware(['auth', 'admin'])->group(function () {
         Illuminate\Support\Facades\Artisan::call('config:clear');
         return response()->json(['success' => true, 'message' => 'Tüm önbellek temizlendi.']);
     })->name('admin.clear-cache');
+    Route::post('/api/admin/reset-test-data', [AdminController::class, 'resetTestData'])
+        ->name('admin.reset-test-data');
+
+    Route::prefix('api/work-order-preview')->group(function () {
+        Route::get('/settings', [WorkOrderPreviewController::class, 'settings']);
+        Route::post('/settings', [WorkOrderPreviewController::class, 'updateSettings']);
+        Route::post('/preview', [WorkOrderPreviewController::class, 'preview']);
+    });
 
     Route::prefix('api/work-order-center')->group(function () {
         Route::get('/feed', [WorkOrderCenterController::class, 'feed']);
+        Route::get('/orders', [WorkOrderCenterController::class, 'orders']);
         Route::get('/export', [WorkOrderCenterController::class, 'export']);
         Route::get('/entity/{type}/{id}', [WorkOrderCenterController::class, 'entity'])->whereNumber('id');
         Route::get('/timeline', [WorkOrderCenterController::class, 'timeline']);

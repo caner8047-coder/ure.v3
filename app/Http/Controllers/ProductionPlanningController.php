@@ -6,9 +6,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Services\BomService;
+use App\Services\PersonnelTaskMerger;
 
 class ProductionPlanningController extends Controller
 {
+    private function pendingApprovalSql(string $column = 'Onay'): string
+    {
+        $normalized = "LOWER(TRIM(CAST({$column} AS CHAR)))";
+
+        return "({$column} IS NULL OR TRIM(CAST({$column} AS CHAR)) = '' OR {$normalized} NOT IN ('1', 'true', 'evet', 'yes'))";
+    }
+
     private function isApprovedValue(mixed $value): bool
     {
         $normalized = strtolower(trim((string) $value));
@@ -63,6 +71,49 @@ class ProductionPlanningController extends Controller
         ];
     }
 
+    private function mergeDuplicatePersonnelTasks(int $personelNo): void
+    {
+        try {
+            app(PersonnelTaskMerger::class)->mergeOpenDuplicatesForPersonnel($personelNo);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+    }
+
+    private function refreshPersonnelTaskReadiness(int $personelNo): void
+    {
+        if ($personelNo <= 0 || !Schema::hasTable('tbPersonelGorev')) {
+            return;
+        }
+
+        try {
+            $bomService = app(BomService::class);
+            $tasks = DB::table('tbPersonelGorev')
+                ->where('PersonelNo', $personelNo)
+                ->where(function ($query) {
+                    $query->where('Adet', '>', 0)
+                        ->orWhere('BekleyenAdet', '>', 0);
+                })
+                ->limit(300)
+                ->get();
+
+            foreach ($tasks as $task) {
+                $split = $bomService->personnelTaskReadySplit($task);
+                $newReady = intval($split['ready']);
+                $newWaiting = intval($split['waiting']);
+
+                if ($newReady !== intval($task->Adet ?? 0) || $newWaiting !== intval($task->BekleyenAdet ?? 0)) {
+                    DB::table('tbPersonelGorev')->where('No', $task->No)->update([
+                        'Adet' => $newReady,
+                        'BekleyenAdet' => $newWaiting,
+                    ]);
+                }
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+    }
+
     private function logPlanningEvent(string $eventType, object $task, ?object $afterTask = null, array $attributes = []): void
     {
         app(\App\Services\WorkOrderEventLogger::class)->log(array_merge(
@@ -76,15 +127,488 @@ class ProductionPlanningController extends Controller
         ));
     }
 
+    private function taskQuantityToCheck(object $task): int
+    {
+        $readyQuantity = max(0, intval($task->Adet ?? 0));
+        $waitingQuantity = max(0, intval($task->BekleyenAdet ?? 0));
+
+        return $readyQuantity > 0 ? $readyQuantity : $waitingQuantity;
+    }
+
+    private function componentStockSnapshot(int $componentNo): array
+    {
+        if ($componentNo <= 0 || !Schema::hasTable('tbBolumAraStok')) {
+            return ['total' => 0, 'free' => 0];
+        }
+
+        $rows = DB::table('tbBolumAraStok')
+            ->where('AraUrunAdiNo', $componentNo)
+            ->get(['Adet', 'TamponMiktar']);
+
+        return [
+            'total' => intval($rows->sum(fn ($row) => max(0, intval($row->Adet ?? 0)))),
+            'free' => intval($rows->sum(fn ($row) => max(0, min(intval($row->Adet ?? 0), intval($row->TamponMiktar ?? 0))))),
+        ];
+    }
+
+    private function untracedHeldStockQuantity(int $componentNo): int
+    {
+        if ($componentNo <= 0 || !Schema::hasTable('tbBolumAraStok')) {
+            return 0;
+        }
+
+        return intval(DB::table('tbBolumAraStok')
+            ->where('AraUrunAdiNo', $componentNo)
+            ->where('Adet', '>', 0)
+            ->get()
+            ->sum(fn ($row) => max(0, intval($row->Adet ?? 0) - intval($row->TamponMiktar ?? 0))));
+    }
+
+    private function heldQuantityForTaskComponent(
+        object $task,
+        int $componentNo,
+        int $requiredQuantity,
+        BomService $bomService
+    ): int {
+        $traceHeldQuantity = $bomService->orderHeldStockQuantity(
+            $componentNo,
+            $bomService->traceContextFromRecord($task)
+        );
+
+        if ($traceHeldQuantity > 0) {
+            return $traceHeldQuantity;
+        }
+
+        return min(max(0, $requiredQuantity), $this->untracedHeldStockQuantity($componentNo));
+    }
+
+    private function readinessIssueForTask(object $task, BomService $bomService): ?string
+    {
+        $quantityToCheck = $this->taskQuantityToCheck($task);
+        if ($quantityToCheck <= 0) {
+            return 'Parça/stok bekliyor.';
+        }
+
+        $requirements = $bomService->directChildRequirements(strval($task->AraUrunAdiNo ?? 0), $quantityToCheck);
+        if (empty($requirements)) {
+            return null;
+        }
+
+        foreach ($requirements as $componentNo => $requiredQuantity) {
+            $componentNo = intval($componentNo);
+            $requiredQuantity = max(0, intval($requiredQuantity));
+            if ($componentNo <= 0 || $requiredQuantity <= 0) {
+                continue;
+            }
+
+            $stock = $this->componentStockSnapshot($componentNo);
+            $heldQuantity = $this->heldQuantityForTaskComponent($task, $componentNo, $requiredQuantity, $bomService);
+            $heldUsable = min($requiredQuantity, max(0, $heldQuantity), $stock['total']);
+            $freeUsable = min(max(0, $requiredQuantity - $heldUsable), $stock['free']);
+            $usableQuantity = min($requiredQuantity, max(0, $heldUsable + $freeUsable), $stock['total']);
+
+            if ($requiredQuantity > $usableQuantity) {
+                $componentName = DB::table('tbAraUrun')->where('No', $componentNo)->value('AraUrunAdi');
+
+                return trim((string) ($componentName ?: 'Alt parça')) . ' için yeterli alt parça stoğu yok.';
+            }
+        }
+
+        return null;
+    }
+
+    private function supplierStatusLabel(object $task): string
+    {
+        $ready = max(0, intval($task->Adet ?? 0));
+        $waiting = max(0, intval($task->BekleyenAdet ?? 0));
+        $approval = strtolower(trim((string) ($task->Onay ?? '')));
+
+        if ($ready <= 0 && $waiting > 0) {
+            return 'Alt parça bekliyor';
+        }
+
+        if (in_array($approval, ['hazir', 'ready'], true)) {
+            return 'Üretime hazır';
+        }
+
+        if (!$this->isApprovedValue($approval)) {
+            return 'Üretimde';
+        }
+
+        return 'Açık görev';
+    }
+
+    private function supplierWaitReason(object $task, BomService $bomService): string
+    {
+        $issue = $this->readinessIssueForTask($task, $bomService);
+        if ($issue !== null) {
+            return $issue;
+        }
+
+        return match ($this->supplierStatusLabel($task)) {
+            'Üretime hazır' => 'Personelin görevi kabul edip üretime alması bekleniyor.',
+            'Üretimde' => 'Personelin üretim girişi yapması bekleniyor.',
+            default => 'Görev açık.',
+        };
+    }
+
+    private function dependencyShortagesForTask(object $task, BomService $bomService): array
+    {
+        $quantityToCheck = $this->taskQuantityToCheck($task);
+        if ($quantityToCheck <= 0) {
+            return [];
+        }
+
+        $requirements = $bomService->directChildRequirements(strval($task->AraUrunAdiNo ?? 0), $quantityToCheck);
+        if (empty($requirements)) {
+            return [];
+        }
+
+        $traceContext = $bomService->traceContextFromRecord($task);
+        $shortages = [];
+
+        foreach ($requirements as $componentNo => $requiredQuantity) {
+            $componentNo = intval($componentNo);
+            $requiredQuantity = max(0, intval($requiredQuantity));
+            if ($componentNo <= 0 || $requiredQuantity <= 0) {
+                continue;
+            }
+
+            $component = DB::table('tbAraUrun as au')
+                ->leftJoin('tbBolum as b', 'au.BolumAdiNo', '=', 'b.No')
+                ->where('au.No', $componentNo)
+                ->select('au.No', 'au.AraUrunAdi', 'au.BolumAdiNo', DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"))
+                ->first();
+
+            $stock = $this->componentStockSnapshot($componentNo);
+            $heldQuantity = $this->heldQuantityForTaskComponent($task, $componentNo, $requiredQuantity, $bomService);
+            $heldUsable = min($requiredQuantity, max(0, $heldQuantity), $stock['total']);
+            $freeUsable = min(max(0, $requiredQuantity - $heldUsable), $stock['free']);
+            $usableQuantity = min($requiredQuantity, max(0, $heldUsable + $freeUsable), $stock['total']);
+            $missingQuantity = max(0, $requiredQuantity - $usableQuantity);
+
+            if ($missingQuantity <= 0) {
+                continue;
+            }
+
+            $shortages[] = [
+                'component_no' => $componentNo,
+                'component_name' => trim((string) ($component->AraUrunAdi ?? 'Alt parça')),
+                'department_no' => intval($component->BolumAdiNo ?? 0) ?: null,
+                'department_name' => trim((string) ($component->BolumAdi ?? '')),
+                'required_quantity' => $requiredQuantity,
+                'stock_quantity' => $stock['total'],
+                'free_stock_quantity' => $stock['free'],
+                'held_quantity' => max(0, intval($heldQuantity)),
+                'usable_quantity' => $usableQuantity,
+                'missing_quantity' => $missingQuantity,
+                'suppliers' => $this->dependencySuppliersForComponent($task, $componentNo, $missingQuantity, $traceContext, $bomService),
+                'pool' => $this->dependencyPoolRowsForComponent($componentNo, $traceContext, $bomService),
+            ];
+        }
+
+        return $shortages;
+    }
+
+    private function dependencySuppliersForComponent(
+        object $waitingTask,
+        int $componentNo,
+        int $missingQuantity,
+        array $traceContext,
+        BomService $bomService
+    ): array {
+        if ($componentNo <= 0 || !Schema::hasTable('tbPersonelGorev')) {
+            return [];
+        }
+
+        $query = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->where('pg.AraUrunAdiNo', $componentNo)
+            ->where(function ($query) {
+                $query->where('pg.Adet', '>', 0)
+                    ->orWhere('pg.BekleyenAdet', '>', 0);
+            })
+            ->orderBy('pg.GorevBaslamaTarihi')
+            ->orderBy('pg.No');
+
+        $bomService->scopeQueryToTrace($query, $traceContext, true, 'pg');
+
+        $supplierColumns = [
+            'pg.No',
+            'pg.PersonelNo',
+            'pg.GorevBaslamaTarihi',
+            'pg.Adet',
+            'pg.BekleyenAdet',
+            'pg.Onay',
+            'pg.AraUrunAdiNo',
+            'pg.BolumAdiNo',
+            'pg.UrunIDNo',
+            DB::raw("IFNULL(p.Ad, '') as PersonelAd"),
+            DB::raw("IFNULL(p.Soyad, '') as PersonelSoyad"),
+            DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+        ];
+        $supplierColumns[] = Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo')
+            ? 'pg.SiparisSatirNo'
+            : DB::raw('NULL as SiparisSatirNo');
+        $supplierColumns[] = Schema::hasColumn('tbPersonelGorev', 'SiparisNo')
+            ? 'pg.SiparisNo'
+            : DB::raw('NULL as SiparisNo');
+
+        $rows = $query
+            ->limit(20)
+            ->get($supplierColumns);
+
+        $remainingNeed = max(0, $missingQuantity);
+
+        return $rows->map(function ($row) use (&$remainingNeed, $bomService) {
+            $openQuantity = max(0, intval($row->Adet ?? 0)) + max(0, intval($row->BekleyenAdet ?? 0));
+            $expectedQuantity = $remainingNeed > 0 ? min($remainingNeed, $openQuantity) : 0;
+            $remainingNeed = max(0, $remainingNeed - $expectedQuantity);
+            $personelNo = intval($row->PersonelNo ?? 0);
+            $fullName = trim((string) ($row->PersonelAd ?? '') . ' ' . (string) ($row->PersonelSoyad ?? ''));
+
+            return [
+                'task_no' => intval($row->No ?? 0),
+                'personnel_no' => $personelNo,
+                'personnel_name' => $fullName !== '' ? $fullName : ('Personel #' . $personelNo),
+                'department_name' => trim((string) ($row->BolumAdi ?? '')),
+                'ready_quantity' => max(0, intval($row->Adet ?? 0)),
+                'waiting_quantity' => max(0, intval($row->BekleyenAdet ?? 0)),
+                'open_quantity' => $openQuantity,
+                'expected_quantity' => $expectedQuantity,
+                'status' => $this->supplierStatusLabel($row),
+                'wait_reason' => $this->supplierWaitReason($row, $bomService),
+                'started_at' => trim((string) ($row->GorevBaslamaTarihi ?? '')),
+                'can_notify' => $personelNo > 0,
+            ];
+        })->values()->all();
+    }
+
+    private function dependencyPoolRowsForComponent(int $componentNo, array $traceContext, BomService $bomService): array
+    {
+        if ($componentNo <= 0 || !Schema::hasTable('tbBolumHavuz')) {
+            return [];
+        }
+
+        $query = DB::table('tbBolumHavuz as bh')
+            ->leftJoin('tbBolum as b', 'bh.BolumAdiNo', '=', 'b.No')
+            ->where('bh.AraUrunAdiNo', $componentNo)
+            ->where('bh.ToplamAdet', '>', 0)
+            ->orderBy('bh.GorevBaslangicTarihi')
+            ->orderBy('bh.No');
+
+        $bomService->scopeQueryToTrace($query, $traceContext, true, 'bh');
+
+        return $query
+            ->limit(10)
+            ->get([
+                'bh.No',
+                'bh.Adet',
+                'bh.ToplamAdet',
+                'bh.GorevBaslangicTarihi',
+                DB::raw(Schema::hasColumn('tbBolumHavuz', 'GorevBaslangicSaati') ? "IFNULL(bh.GorevBaslangicSaati, '') as GorevBaslangicSaati" : "'' as GorevBaslangicSaati"),
+                DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+            ])
+            ->map(fn ($row) => [
+                'pool_no' => intval($row->No ?? 0),
+                'ready_quantity' => max(0, intval($row->Adet ?? 0)),
+                'open_quantity' => max(0, intval($row->ToplamAdet ?? 0)),
+                'department_name' => trim((string) ($row->BolumAdi ?? '')),
+                'scheduled_at' => trim((string) ($row->GorevBaslangicTarihi ?? '') . ' ' . (string) ($row->GorevBaslangicSaati ?? '')),
+                'status' => 'Havuzda, personel ataması bekliyor',
+            ])
+            ->values()
+            ->all();
+    }
+
+    public function dependencyInfo(Request $request, $id)
+    {
+        $bomService = app(BomService::class);
+        $personnelNameSql = DB::connection()->getDriverName() === 'sqlite'
+            ? "TRIM(IFNULL(p.Ad, '') || ' ' || IFNULL(p.Soyad, '')) as PersonelAdi"
+            : "TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as PersonelAdi";
+
+        $task = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
+            ->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->where('pg.No', intval($id))
+            ->select(
+                'pg.*',
+                DB::raw("IFNULL(au.AraUrunAdi, '') as AraUrunAdi"),
+                DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+                DB::raw($personnelNameSql)
+            )
+            ->first();
+
+        if (!$task) {
+            return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+        }
+
+        $shortages = $this->dependencyShortagesForTask($task, $bomService);
+
+        return response()->json([
+            'success' => true,
+            'task' => [
+                'no' => intval($task->No ?? 0),
+                'personnel_no' => intval($task->PersonelNo ?? 0),
+                'personnel_name' => trim((string) ($task->PersonelAdi ?? '')),
+                'component_no' => intval($task->AraUrunAdiNo ?? 0),
+                'component_name' => trim((string) ($task->AraUrunAdi ?? '')),
+                'department_name' => trim((string) ($task->BolumAdi ?? '')),
+                'ready_quantity' => max(0, intval($task->Adet ?? 0)),
+                'waiting_quantity' => max(0, intval($task->BekleyenAdet ?? 0)),
+                'quantity_checked' => $this->taskQuantityToCheck($task),
+            ],
+            'has_shortage' => !empty($shortages),
+            'shortages' => $shortages,
+        ]);
+    }
+
+    public function notifyDependency(Request $request, $id)
+    {
+        $componentNo = intval($request->input('component_no', 0));
+        $supplierTaskNo = intval($request->input('supplier_task_no', 0));
+
+        if ($componentNo <= 0 || $supplierTaskNo <= 0) {
+            return response()->json(['success' => false, 'message' => 'Bildirim için eksik bağımlılık bilgisi var.'], 422);
+        }
+
+        if (!Schema::hasTable('tbIletisim')) {
+            return response()->json(['success' => false, 'message' => 'Mesaj tablosu bulunamadı.'], 500);
+        }
+
+        $bomService = app(BomService::class);
+        $task = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
+            ->where('pg.No', intval($id))
+            ->select('pg.*', DB::raw("IFNULL(au.AraUrunAdi, '') as AraUrunAdi"))
+            ->first();
+
+        if (!$task) {
+            return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+        }
+
+        $selectedShortage = null;
+        $selectedSupplier = null;
+        foreach ($this->dependencyShortagesForTask($task, $bomService) as $shortage) {
+            if (intval($shortage['component_no'] ?? 0) !== $componentNo) {
+                continue;
+            }
+
+            foreach (($shortage['suppliers'] ?? []) as $supplier) {
+                if (intval($supplier['task_no'] ?? 0) === $supplierTaskNo) {
+                    $selectedShortage = $shortage;
+                    $selectedSupplier = $supplier;
+                    break 2;
+                }
+            }
+        }
+
+        if (!$selectedShortage || !$selectedSupplier) {
+            return response()->json(['success' => false, 'message' => 'Beklenen personel görevi bulunamadı.'], 404);
+        }
+
+        $targetPersonnelNo = intval($selectedSupplier['personnel_no'] ?? 0);
+        if ($targetPersonnelNo <= 0) {
+            return response()->json(['success' => false, 'message' => 'Bu bağımlılık için bildirilecek personel bulunamadı.'], 422);
+        }
+
+        $trackingCode = 'BG-' . intval($task->No ?? 0) . '-' . $supplierTaskNo . '-' . $componentNo;
+        $existing = DB::table('tbIletisim')
+            ->where('PersonelNo', $targetPersonnelNo)
+            ->where('Mesaj', 'like', '%' . $trackingCode . '%')
+            ->orderByDesc('MesajNo')
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Bu personele bu bekleme bildirimi daha önce gönderilmiş.',
+                'already_sent' => true,
+            ]);
+        }
+
+        $target = DB::table('tbPersonel')->where('PersonelNo', $targetPersonnelNo)->first();
+        $adminName = trim((string) ($request->user()->name ?? 'Yönetici') . ' ' . (string) ($request->user()->surname ?? ''));
+        $adminName = $adminName !== '' ? $adminName : 'Yönetici';
+        $waitingTaskName = trim((string) ($task->AraUrunAdi ?? 'Görev'));
+        $componentName = trim((string) ($selectedShortage['component_name'] ?? 'Alt parça'));
+        $missingQuantity = intval($selectedShortage['missing_quantity'] ?? 0);
+        $expectedQuantity = intval($selectedSupplier['expected_quantity'] ?? 0);
+        $displayQuantity = $expectedQuantity > 0 ? $expectedQuantity : $missingQuantity;
+
+        $message = implode("\n", array_filter([
+            'Üretim Akışı Bildirimi',
+            "Bekleyen görev: {$waitingTaskName} (#" . intval($task->No ?? 0) . ")",
+            "Beklenen parça: {$componentName}",
+            "Beklenen adet: {$displayQuantity}",
+            "Aksiyon: Üretim durumunu kontrol edip stoğa giriş yapınız.",
+            "Takip: {$trackingCode}",
+        ]));
+
+        $insert = [
+            'PersonelNo' => $targetPersonnelNo,
+            'BolumAdiNo' => null,
+            'Mesaj' => $message,
+            'Tarih' => now()->format('d/m/Y'),
+        ];
+
+        if (Schema::hasColumn('tbIletisim', 'Saat')) {
+            $insert['Saat'] = now()->format('H:i');
+        }
+        if (Schema::hasColumn('tbIletisim', 'Mail')) {
+            $insert['Mail'] = $target->Mail ?? null;
+        }
+        if (Schema::hasColumn('tbIletisim', 'AdSoyad')) {
+            $insert['AdSoyad'] = $adminName;
+        }
+        if (Schema::hasColumn('tbIletisim', 'Okundu')) {
+            $insert['Okundu'] = 0;
+        }
+
+        DB::table('tbIletisim')->insert(array_intersect_key($insert, array_flip(Schema::getColumnListing('tbIletisim'))));
+
+        $this->logPlanningEvent('dependency_notification_sent_by_admin', $task, null, [
+            'next_step_human' => 'Alt parcayi uretecek personele yonetici tarafindan bildirim gonderildi.',
+            'context' => [
+                'component_no' => $componentNo,
+                'component_name' => $componentName,
+                'missing_quantity' => $missingQuantity,
+                'supplier_task_no' => $supplierTaskNo,
+                'target_personnel_no' => $targetPersonnelNo,
+                'tracking_code' => $trackingCode,
+            ],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => ($selectedSupplier['personnel_name'] ?? 'Personele') . ' bildirim gönderildi.',
+            'already_sent' => false,
+        ]);
+    }
+
     /**
      * Seçilen personelin görevlerini tarih bazlı getirir (Drag-Drop UI için).
      */
     public function getPersonnelTasks(Request $request, $personelNo)
     {
+        $this->mergeDuplicatePersonnelTasks(intval($personelNo));
+        $this->refreshPersonnelTaskReadiness(intval($personelNo));
+
         $query = DB::table('tbPersonelGorev as pg')
             ->join('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
             ->join('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
             ->where('pg.PersonelNo', $personelNo)
+            ->where(function ($query) {
+                $query->where('pg.Adet', '>', 0)
+                    ->orWhere('pg.BekleyenAdet', '>', 0);
+            })
+            ->where(function ($query) {
+                $query->where('pg.BekleyenAdet', '>', 0)
+                    ->orWhereRaw($this->pendingApprovalSql('pg.Onay'));
+            })
             ->select(
                 'pg.No',
                 'pg.GorevBaslamaTarihi',
@@ -150,10 +674,14 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Bu görev için havuzda artırılabilecek adet kalmadı.']);
             }
 
+            if ($bomService->hasOpenDescendantWork(strval($pool->AraUrunAdiNo ?? 0), $bomService->traceContextFromRecord($pool))) {
+                return response()->json(['success' => false, 'message' => 'Alt bileşen görevleri tamamlanmadan bu görev artırılamaz.']);
+            }
+
             DB::table('tbPersonelGorev')->where('No', $taskId)->update([
                 'Adet' => intval($task->Adet ?? 0) + 1,
-                'BekleyenAdet' => intval($task->BekleyenAdet ?? 0) + 1,
-                'Onay' => 'false',
+                'BekleyenAdet' => intval($task->BekleyenAdet ?? 0),
+                'Onay' => null,
             ]);
 
             $newToplam = intval($pool->ToplamAdet ?? 0) - 1;
@@ -199,23 +727,25 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
             }
 
-            $pending = max(0, intval($task->BekleyenAdet ?? 0));
-            if ($pending <= 0) {
-                return response()->json(['success' => false, 'message' => 'Azaltılabilecek bekleyen adet kalmadı.']);
+            $ready = max(0, intval($task->Adet ?? 0));
+            if ($ready <= 0) {
+                return response()->json(['success' => false, 'message' => 'Azaltılabilecek adet kalmadı.']);
             }
 
-            $newToplam = max(0, intval($task->Adet ?? 0) - 1);
-            $newPending = max(0, $pending - 1);
+            $pending = max(0, intval($task->BekleyenAdet ?? 0));
+            $newReady = max(0, $ready - 1);
+            $newPending = $pending;
+            $remainingTotal = $newReady + $newPending;
             $bomService = app(BomService::class);
             $traceContext = $bomService->traceContextFromRecord($task);
 
-            if ($newToplam === 0 && $newPending === 0) {
+            if ($remainingTotal === 0) {
                 DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
             } else {
                 DB::table('tbPersonelGorev')->where('No', $taskId)->update([
-                    'Adet' => $newToplam,
+                    'Adet' => $newReady,
                     'BekleyenAdet' => $newPending,
-                    'Onay' => $newPending > 0 ? 'false' : 'true',
+                    'Onay' => null,
                 ]);
             }
 
@@ -232,7 +762,7 @@ class ProductionPlanningController extends Controller
             );
             $bomService->personelGorevTabloGuncelle(strval($task->AraUrunAdiNo));
 
-            $updatedTask = $newToplam === 0 && $newPending === 0
+            $updatedTask = $remainingTotal === 0
                 ? null
                 : DB::table('tbPersonelGorev')->where('No', $taskId)->first();
 
@@ -241,7 +771,8 @@ class ProductionPlanningController extends Controller
                     ? 'Kalan miktar icin gorev devam ediyor.'
                     : 'Gorev sifirlandi; gerekiyorsa havuzdan yeniden planlanabilir.',
                 'context' => [
-                    'new_total_amount' => $newToplam,
+                    'new_total_amount' => $remainingTotal,
+                    'new_ready_amount' => $newReady,
                     'new_pending_amount' => $newPending,
                 ],
             ]);
@@ -256,25 +787,29 @@ class ProductionPlanningController extends Controller
     public function deleteTask($taskId)
     {
         return DB::transaction(function () use ($taskId) {
-            $task = DB::table('tbPersonelGorev')->where('No', $taskId)->first();
+            $task = DB::table('tbPersonelGorev')
+                ->where('No', $taskId)
+                ->lockForUpdate()
+                ->first();
             if (!$task) {
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
             }
 
             $araUrunAdiNo = $task->AraUrunAdiNo;
             $bekleyenAdet = max(0, intval($task->BekleyenAdet ?? 0));
+            $iadeAdet = max(0, intval($task->Adet ?? 0)) + $bekleyenAdet;
 
             // Görevi sil
             DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
 
             $bomService = app(BomService::class);
-            if ($bekleyenAdet > 0) {
+            if ($iadeAdet > 0) {
                 $tamponDusumleri = [];
                 $bomService->minAraUrunUretimiDenetle(
                     intval($task->UrunIDNo ?? 0),
                     '',
                     strval($araUrunAdiNo),
-                    $bekleyenAdet,
+                    $iadeAdet,
                     'Personel üzerinden alınan görev',
                     'StokHaric',
                     $tamponDusumleri,
@@ -285,18 +820,18 @@ class ProductionPlanningController extends Controller
             $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
 
             $this->logPlanningEvent('personnel_task_deleted', $task, null, [
-                'next_step_human' => $bekleyenAdet > 0
-                    ? 'Bekleyen miktar havuza dondu; yeniden planlama yapilabilir.'
-                    : 'Tamamlanan kisim stokta birakildi.',
+                'next_step_human' => $iadeAdet > 0
+                    ? 'Acik miktar havuza dondu; yeniden planlama yapilabilir.'
+                    : 'Gorev sifir miktarla silindi.',
                 'context' => [
-                    'returned_amount' => $bekleyenAdet,
+                    'returned_amount' => $iadeAdet,
                 ],
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => $bekleyenAdet > 0
-                    ? "{$bekleyenAdet} adet havuza geri aktarıldı."
+                'message' => $iadeAdet > 0
+                    ? "{$iadeAdet} adet havuza geri aktarıldı."
                     : 'Görev silindi.',
             ]);
         });
@@ -316,47 +851,56 @@ class ProductionPlanningController extends Controller
         $formattedDate = \Carbon\Carbon::parse($newDate)->format('d/m/Y');
 
         return DB::transaction(function () use ($taskId, $formattedDate) {
-            $mevcutGorev = DB::table('tbPersonelGorev')->where('No', $taskId)->first();
+            $mevcutGorev = DB::table('tbPersonelGorev')
+                ->where('No', $taskId)
+                ->lockForUpdate()
+                ->first();
+
             if (!$mevcutGorev) {
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
             }
 
             $araUrunAdiNo = intval($mevcutGorev->AraUrunAdiNo ?? 0);
+            $hazirAdet = max(0, intval($mevcutGorev->Adet ?? 0));
             $bekleyenAdet = max(0, intval($mevcutGorev->BekleyenAdet ?? 0));
-            $tamamlananAdet = max(0, intval($mevcutGorev->Adet ?? 0) - $bekleyenAdet);
-            if ($tamamlananAdet > 0) {
-                return response()->json(['success' => false, 'message' => 'Kısmen tamamlanmış görevlerin tarihi değiştirilemez.']);
-            }
-
-            $tasinacakAdet = $bekleyenAdet > 0 ? $bekleyenAdet : intval($mevcutGorev->Adet ?? 0);
+            $tasinacakAdet = $hazirAdet + $bekleyenAdet;
             if ($tasinacakAdet <= 0) {
                 return response()->json(['success' => false, 'message' => 'Taşınacak aktif adet bulunamadı.']);
             }
 
             $bomService = app(BomService::class);
             $traceContext = $bomService->traceContextFromRecord($mevcutGorev);
-            
+
             // Aynı tarihte aynı parça için başka görev var mı?
             $mevcutKayitQuery = DB::table('tbPersonelGorev')
                 ->where('AraUrunAdiNo', $araUrunAdiNo)
                 ->where('PersonelNo', $mevcutGorev->PersonelNo)
                 ->whereRaw("SUBSTRING(GorevBaslamaTarihi, 1, 10) = ?", [$formattedDate])
-                ->where('No', '!=', $taskId);
+                ->where('No', '!=', $taskId)
+                ->where(function ($query) {
+                    $query->where('Adet', '>', 0)
+                        ->orWhere('BekleyenAdet', '>', 0);
+                })
+                ->where(function ($query) {
+                    $query->where('BekleyenAdet', '>', 0)
+                        ->orWhereRaw($this->pendingApprovalSql());
+                });
 
             $bomService->scopeQueryToTrace($mevcutKayitQuery, $traceContext, true);
-            $mevcutKayit = $mevcutKayitQuery->first();
+            $mevcutKayit = $mevcutKayitQuery->lockForUpdate()->first();
 
             if ($mevcutKayit) {
+                $mevcutHazir = max(0, intval($mevcutKayit->Adet ?? 0));
                 $mevcutBekleyen = max(0, intval($mevcutKayit->BekleyenAdet ?? 0));
-                $mevcutTamamlanan = max(0, intval($mevcutKayit->Adet ?? 0) - $mevcutBekleyen);
-                if ($mevcutTamamlanan > 0) {
-                    return response()->json(['success' => false, 'message' => 'Hedef tarihte kısmen tamamlanmış görev bulunduğu için birleştirme yapılamaz.']);
-                }
+                $split = $bomService->personnelTaskReadySplit(
+                    $mevcutKayit,
+                    $mevcutHazir + $mevcutBekleyen + $tasinacakAdet
+                );
 
                 DB::table('tbPersonelGorev')->where('No', $mevcutKayit->No)->update([
-                    'Adet' => intval($mevcutKayit->Adet ?? 0) + $tasinacakAdet,
-                    'BekleyenAdet' => $mevcutBekleyen + $tasinacakAdet,
-                    'Onay' => 'false',
+                    'Adet' => intval($split['ready']),
+                    'BekleyenAdet' => intval($split['waiting']),
+                    'Onay' => null,
                 ]);
 
                 DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
@@ -366,6 +910,9 @@ class ProductionPlanningController extends Controller
                     'GorevBaslamaTarihi' => $yeniTarih
                 ]);
             }
+
+            // BOM senkronizasyonu — üst bileşen görevlerinin hazır/bekleyen adetlerini güncelle
+            $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
 
             $updatedTask = DB::table('tbPersonelGorev')
                 ->where('No', $mevcutKayit?->No ?? $taskId)
@@ -380,6 +927,200 @@ class ProductionPlanningController extends Controller
             ]);
 
             return response()->json(['success' => true]);
+        });
+    }
+
+    /**
+     * Görev aktarma seçeneklerini getirir (aynı bölümdeki personeller).
+     */
+    public function getTransferOptions($taskId)
+    {
+        $personnelNameSql = DB::connection()->getDriverName() === 'sqlite'
+            ? "TRIM(IFNULL(p.Ad, '') || ' ' || IFNULL(p.Soyad, '')) as PersonelAdi"
+            : "TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as PersonelAdi";
+
+        $task = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
+            ->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->where('pg.No', intval($taskId))
+            ->select(
+                'pg.No',
+                'pg.PersonelNo',
+                'pg.AraUrunAdiNo',
+                'pg.BolumAdiNo',
+                'pg.Adet',
+                'pg.BekleyenAdet',
+                'pg.GorevBaslamaTarihi',
+                DB::raw("IFNULL(au.AraUrunAdi, '') as AraUrunAdi"),
+                DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+                DB::raw($personnelNameSql)
+            )
+            ->first();
+
+        if (!$task) {
+            return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+        }
+
+        $bolumAdiNo = intval($task->BolumAdiNo ?? 0);
+        $currentPersonelNo = intval($task->PersonelNo ?? 0);
+
+        $availablePersonnel = DB::table('tbPersonel as p')
+            ->leftJoin('tbBolum as b', 'p.BolumAdiNo', '=', 'b.No')
+            ->where('p.BolumAdiNo', $bolumAdiNo)
+            ->where('p.PersonelNo', '!=', $currentPersonelNo)
+            ->select(
+                'p.PersonelNo',
+                DB::raw(DB::connection()->getDriverName() === 'sqlite'
+                    ? "TRIM(IFNULL(p.Ad, '') || ' ' || IFNULL(p.Soyad, '')) as PersonelAdi"
+                    : "TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as PersonelAdi"
+                )
+            )
+            ->orderBy('p.Ad')
+            ->get();
+
+        $readyQuantity = max(0, intval($task->Adet ?? 0));
+        $waitingQuantity = max(0, intval($task->BekleyenAdet ?? 0));
+
+        return response()->json([
+            'success' => true,
+            'task' => [
+                'no' => intval($task->No ?? 0),
+                'personnel_no' => $currentPersonelNo,
+                'personnel_name' => trim((string) ($task->PersonelAdi ?? '')),
+                'component_name' => trim((string) ($task->AraUrunAdi ?? '')),
+                'department_name' => trim((string) ($task->BolumAdi ?? '')),
+                'department_id' => $bolumAdiNo,
+                'ready_quantity' => $readyQuantity,
+                'waiting_quantity' => $waitingQuantity,
+                'total_quantity' => $readyQuantity + $waitingQuantity,
+                'date' => trim((string) ($task->GorevBaslamaTarihi ?? '')),
+            ],
+            'available_personnel' => $availablePersonnel,
+        ]);
+    }
+
+    /**
+     * Görevi başka bir personele aktarır (aynı bölüm zorunlu).
+     */
+    public function transferTask(Request $request, $taskId)
+    {
+        $targetPersonnelNo = intval($request->input('target_personnel_no', 0));
+        if ($targetPersonnelNo <= 0) {
+            return response()->json(['success' => false, 'message' => 'Hedef personel seçilmedi.'], 422);
+        }
+
+        return DB::transaction(function () use ($taskId, $targetPersonnelNo) {
+            $task = DB::table('tbPersonelGorev')
+                ->where('No', $taskId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$task) {
+                return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
+            }
+
+            if ($this->isApprovedValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Tamamlanmış görev aktarılamaz.'], 422);
+            }
+
+            $currentPersonnelNo = intval($task->PersonelNo ?? 0);
+            if ($currentPersonnelNo === $targetPersonnelNo) {
+                return response()->json(['success' => false, 'message' => 'Görev zaten bu personelde.'], 422);
+            }
+
+            // Hedef personelin aynı bölümde olduğunu doğrula
+            $targetPersonnel = DB::table('tbPersonel')
+                ->where('PersonelNo', $targetPersonnelNo)
+                ->first();
+
+            if (!$targetPersonnel) {
+                return response()->json(['success' => false, 'message' => 'Hedef personel bulunamadı.'], 404);
+            }
+
+            $taskDepartmentNo = intval($task->BolumAdiNo ?? 0);
+            $targetDepartmentNo = intval($targetPersonnel->BolumAdiNo ?? 0);
+            if ($taskDepartmentNo > 0 && $targetDepartmentNo !== $taskDepartmentNo) {
+                return response()->json(['success' => false, 'message' => 'Hedef personel aynı bölümde değil.'], 422);
+            }
+
+            $araUrunAdiNo = intval($task->AraUrunAdiNo ?? 0);
+            $hazirAdet = max(0, intval($task->Adet ?? 0));
+            $bekleyenAdet = max(0, intval($task->BekleyenAdet ?? 0));
+            $toplamAdet = $hazirAdet + $bekleyenAdet;
+
+            if ($toplamAdet <= 0) {
+                return response()->json(['success' => false, 'message' => 'Aktarılacak adet bulunamadı.'], 422);
+            }
+
+            $bomService = app(BomService::class);
+            $traceContext = $bomService->traceContextFromRecord($task);
+            $formattedDate = substr(trim((string) ($task->GorevBaslamaTarihi ?? '')), 0, 10);
+
+            // Hedef personelde aynı tarih+parça+trace var mı?
+            $existingQuery = DB::table('tbPersonelGorev')
+                ->where('AraUrunAdiNo', $araUrunAdiNo)
+                ->where('PersonelNo', $targetPersonnelNo)
+                ->whereRaw("SUBSTRING(GorevBaslamaTarihi, 1, 10) = ?", [$formattedDate])
+                ->where('No', '!=', $taskId)
+                ->where(function ($query) {
+                    $query->where('Adet', '>', 0)
+                        ->orWhere('BekleyenAdet', '>', 0);
+                })
+                ->where(function ($query) {
+                    $query->where('BekleyenAdet', '>', 0)
+                        ->orWhereRaw($this->pendingApprovalSql());
+                });
+
+            $bomService->scopeQueryToTrace($existingQuery, $traceContext, true);
+            $existing = $existingQuery->lockForUpdate()->first();
+
+            $targetName = trim(($targetPersonnel->Ad ?? '') . ' ' . ($targetPersonnel->Soyad ?? ''));
+
+            if ($existing) {
+                // Hedef personelin mevcut görevine birleştir
+                $existingHazir = max(0, intval($existing->Adet ?? 0));
+                $existingBekleyen = max(0, intval($existing->BekleyenAdet ?? 0));
+                $newTotal = $existingHazir + $existingBekleyen + $toplamAdet;
+                $split = $bomService->personnelTaskReadySplit($existing, $newTotal);
+
+                DB::table('tbPersonelGorev')->where('No', $existing->No)->update([
+                    'Adet' => intval($split['ready']),
+                    'BekleyenAdet' => intval($split['waiting']),
+                    'Onay' => null,
+                ]);
+
+                DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
+            } else {
+                // Sadece personeli değiştir
+                DB::table('tbPersonelGorev')->where('No', $taskId)->update([
+                    'PersonelNo' => $targetPersonnelNo,
+                    'Onay' => null,
+                ]);
+            }
+
+            // BOM senkronizasyonu
+            $bomService->personelGorevTabloGuncelle(strval($araUrunAdiNo));
+
+            $updatedTask = DB::table('tbPersonelGorev')
+                ->where('No', $existing->No ?? $taskId)
+                ->first();
+
+            $this->logPlanningEvent('planning_transferred', $task, $updatedTask, [
+                'next_step_human' => 'Gorev baska personele aktarildi; hedef personelin isi takip edilmeli.',
+                'context' => [
+                    'source_personnel_no' => $currentPersonnelNo,
+                    'target_personnel_no' => $targetPersonnelNo,
+                    'target_personnel_name' => $targetName,
+                    'transferred_quantity' => $toplamAdet,
+                    'merged_into_task_no' => intval($existing->No ?? 0) > 0 ? intval($existing->No) : null,
+                ],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Görev {$targetName} personeline aktarıldı ({$toplamAdet} adet).",
+            ]);
         });
     }
 }
