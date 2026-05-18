@@ -236,10 +236,11 @@
     /* ── Ürün Kartı ── */
     .ub-product-card {
         display: grid;
-        grid-template-columns: 40px 1fr auto auto auto auto;
+        grid-template-columns: 34px minmax(220px, 1fr) 70px 70px 120px 150px 110px 130px;
         align-items: center;
-        gap: 14px;
-        padding: 14px 20px;
+        gap: 8px;
+        min-height: 54px;
+        padding: 9px 18px;
         border-bottom: 1px solid var(--z-border-light);
         transition: all 0.15s ease;
     }
@@ -261,8 +262,8 @@
     }
 
     .ub-product-num {
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         border-radius: 8px;
         background: var(--z-bg-soft);
         display: flex;
@@ -279,7 +280,7 @@
     }
 
     .ub-product-name {
-        font-size: 0.85rem;
+        font-size: 0.82rem;
         font-weight: 600;
         margin: 0;
         line-height: 1.3;
@@ -289,7 +290,7 @@
     }
 
     .ub-product-system {
-        font-size: 0.72rem;
+        font-size: 0.68rem;
         color: var(--z-text-muted);
         margin-top: 2px;
         white-space: nowrap;
@@ -303,11 +304,12 @@
         flex-direction: column;
         align-items: center;
         gap: 2px;
-        padding: 0 8px;
-        min-width: 70px;
+        padding: 0 4px;
+        min-width: 0;
     }
 
     .ub-data-label {
+        display: none;
         font-size: 0.6rem;
         font-weight: 700;
         color: var(--z-text-muted);
@@ -317,7 +319,7 @@
     }
 
     .ub-data-value {
-        font-size: 1.05rem;
+        font-size: 0.98rem;
         font-weight: 800;
     }
 
@@ -325,11 +327,93 @@
         color: var(--z-accent);
     }
 
+    .ub-production-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-width: 0;
+        white-space: nowrap;
+    }
+
+    .ub-production-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 32px;
+        padding: 3px 7px;
+        border-radius: 8px;
+        font-size: 0.7rem;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .ub-production-pill.total {
+        background: #eef2ff;
+        color: #4f46e5;
+    }
+
+    .ub-production-pill.available {
+        background: #d1fae5;
+        color: #047857;
+    }
+
+    .ub-production-pill.available.empty {
+        background: #fef2f2;
+        color: #dc2626;
+    }
+
+    .ub-production-slash {
+        font-size: 0.7rem;
+        font-weight: 800;
+        color: var(--z-text-muted);
+    }
+
+    .ub-production-none {
+        color: var(--z-text-muted);
+        font-weight: 800;
+    }
+
+    /* Stok Durumu Hücre */
+    .ub-stock-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-width: 0;
+        white-space: nowrap;
+    }
+    .ub-stock-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 28px;
+        padding: 3px 6px;
+        border-radius: 8px;
+        font-size: 0.68rem;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+    .ub-stock-pill.depot { background: #eef2ff; color: #4f46e5; }
+    .ub-stock-pill.task { background: #fef3c7; color: #b45309; }
+    .ub-stock-pill.free { background: #d1fae5; color: #047857; }
+    .ub-stock-pill.free.empty { background: #fef2f2; color: #dc2626; }
+    .ub-stock-slash {
+        font-size: 0.65rem;
+        font-weight: 800;
+        color: var(--z-text-muted);
+    }
+    .ub-stock-none {
+        color: var(--z-text-muted);
+        font-weight: 800;
+        font-size: 0.78rem;
+    }
+
     /* Kargo Tarihi */
     .ub-kargo-badge {
-        padding: 5px 10px;
+        padding: 4px 8px;
         border-radius: 8px;
-        font-size: 0.72rem;
+        font-size: 0.68rem;
         font-weight: 600;
         white-space: nowrap;
     }
@@ -353,9 +437,9 @@
 
     /* Eşleşme Badge'ı */
     .ub-match-badge {
-        padding: 5px 12px;
+        padding: 4px 9px;
         border-radius: 8px;
-        font-size: 0.72rem;
+        font-size: 0.68rem;
         font-weight: 700;
         display: flex;
         align-items: center;
@@ -376,10 +460,10 @@
     /* ── Sıralama Çubuğu ── */
     .ub-sort-bar {
         display: grid;
-        grid-template-columns: 40px 1fr auto auto auto auto;
+        grid-template-columns: 34px minmax(220px, 1fr) 70px 70px 120px 150px 110px 130px;
         align-items: center;
-        gap: 14px;
-        padding: 10px 20px;
+        gap: 8px;
+        padding: 8px 18px;
         background: var(--z-bg-soft);
         border-bottom: 1px solid var(--z-border-light);
     }
@@ -424,8 +508,50 @@
     }
 
     .ub-sort-spacer {
-        min-width: 70px;
+        min-width: 0;
         text-align: center;
+    }
+
+    .ub-total-row {
+        display: grid;
+        grid-template-columns: 34px minmax(220px, 1fr) 70px 70px 120px 150px 110px 130px;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 18px;
+        border-top: 1px solid var(--z-border);
+        background: var(--z-bg-soft);
+    }
+
+    .ub-total-title {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+    }
+
+    .ub-total-title strong {
+        font-size: 0.82rem;
+        font-weight: 800;
+    }
+
+    .ub-total-title span,
+    .ub-total-meta {
+        font-size: 0.68rem;
+        color: var(--z-text-muted);
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .ub-total-title span {
+        text-align: left;
+    }
+
+    .ub-total-match {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: var(--z-text-secondary);
+        text-align: center;
+        white-space: nowrap;
     }
 
     /* ── Boş Durum ── */
@@ -469,6 +595,12 @@
             padding: 14px 16px;
         }
 
+        .ub-total-row {
+            grid-template-columns: 1fr;
+            gap: 10px;
+            padding: 14px 16px;
+        }
+
         .ub-product-num {
             display: none;
         }
@@ -478,6 +610,10 @@
             justify-content: space-between;
             min-width: auto;
             padding: 0;
+        }
+
+        .ub-data-label {
+            display: block;
         }
 
         .ub-info-banner {
@@ -504,9 +640,8 @@
             <div class="ub-info-text">
                 <h2>Üretimi bekleyen siparişler burada</h2>
                 <p>
-                    Müşterilerden gelen siparişler ürün bazında gruplandı.
-                    Aynı üründen kaç adet üretmeniz gerektiğini, kaç farklı siparişten geldiğini
-                    ve en yakın kargo tarihini bir bakışta görebilirsiniz.
+                    Siparişler sayfasındaki aktif üretim bekleyen satırlar ürün bazında gruplandı.
+                    Özel üretim stok kayıtları bu özete dahil edilmez.
                 </p>
             </div>
         </div>
@@ -573,6 +708,12 @@
                 <button class="ub-sort-btn ub-sort-spacer" onclick="sortBy('SiparisSayisi', this)">
                     Sipariş <span class="sort-arrow">↕</span>
                 </button>
+                <button class="ub-sort-btn ub-sort-spacer" onclick="sortBy('UretimMusaitAdet', this)">
+                    Üretimde / Müsait <span class="sort-arrow">↕</span>
+                </button>
+                <button class="ub-sort-btn ub-sort-spacer" onclick="sortBy('StokDepodaki', this)">
+                    Stok Durumu <span class="sort-arrow">↕</span>
+                </button>
                 <button class="ub-sort-btn ub-sort-spacer" onclick="sortBy('EnYakinKargo', this)">
                     Kargo <span class="sort-arrow">↕</span>
                 </button>
@@ -592,10 +733,10 @@
 @endsection
 
 @push('scripts')
-<script>
+    <script>
     let allItems = [];
     let currentFilter = 'all';
-    let currentSort = { field: null, dir: 'asc' };
+    let currentSort = { field: 'UrunAdi', dir: 'asc' };
 
     function loadSummary() {
         let kategori = document.getElementById('kategoriSelect').value;
@@ -624,10 +765,10 @@
 
                 // İstatistikler
                 let eslesmis = allItems.filter(i => i.EslesenUrunNo > 0).length;
-                document.getElementById('statUrun').textContent = allItems.length;
-                document.getElementById('statAdet').textContent = data.toplamAdet || 0;
-                document.getElementById('statEslesme').textContent = eslesmis;
-                document.getElementById('statEstiksiz').textContent = allItems.length - eslesmis;
+                document.getElementById('statUrun').textContent = formatNumber(allItems.length);
+                document.getElementById('statAdet').textContent = formatNumber(data.toplamAdet || 0);
+                document.getElementById('statEslesme').textContent = formatNumber(eslesmis);
+                document.getElementById('statEstiksiz').textContent = formatNumber(allItems.length - eslesmis);
 
                 renderList();
             })
@@ -675,7 +816,7 @@
                 }
 
                 // Sayısal alanlar
-                if (typeof valA === 'number' || currentSort.field === 'ToplamAdet' || currentSort.field === 'SiparisSayisi' || currentSort.field === 'EslesenUrunNo') {
+                if (typeof valA === 'number' || ['ToplamAdet', 'SiparisSayisi', 'EslesenUrunNo', 'UretimToplamAdet', 'UretimMusaitAdet', 'StokDepodaki', 'StokGorevdeki', 'StokBosta'].includes(currentSort.field)) {
                     valA = parseInt(valA) || 0;
                     valB = parseInt(valB) || 0;
                     return currentSort.dir === 'asc' ? valA - valB : valB - valA;
@@ -690,7 +831,9 @@
             });
         }
 
-        document.getElementById('listCount').textContent = filtered.length + ' ürün';
+        const totals = calculateSummaryTotals(filtered);
+        document.getElementById('listCount').textContent =
+            formatNumber(filtered.length) + ' ürün / ' + formatNumber(totals.siparis) + ' sipariş';
 
         if (filtered.length === 0) {
             grid.innerHTML = `
@@ -720,11 +863,19 @@
                     </div>
                     <div class="ub-data-cell">
                         <span class="ub-data-label">Üretilecek</span>
-                        <span class="ub-data-value qty">${item.ToplamAdet}</span>
+                        <span class="ub-data-value qty">${formatNumber(item.ToplamAdet)}</span>
                     </div>
                     <div class="ub-data-cell">
                         <span class="ub-data-label">Sipariş</span>
-                        <span class="ub-data-value">${item.SiparisSayisi}</span>
+                        <span class="ub-data-value">${formatNumber(item.SiparisSayisi)}</span>
+                    </div>
+                    <div class="ub-data-cell">
+                        <span class="ub-data-label">Üretimde / Müsait</span>
+                        ${renderProductionAvailability(item)}
+                    </div>
+                    <div class="ub-data-cell">
+                        <span class="ub-data-label">Stok Durumu</span>
+                        ${renderStockStatus(item)}
                     </div>
                     <div class="ub-data-cell">
                         <span class="ub-data-label">Kargo</span>
@@ -737,7 +888,98 @@
             `;
         });
 
+        html += `
+            <div class="ub-total-row">
+                <div></div>
+                <div class="ub-total-title">
+                    <strong>Toplam</strong>
+                    <span>${formatNumber(filtered.length)} ürün özeti</span>
+                </div>
+                <div class="ub-data-cell">
+                    <span class="ub-data-label">Üretilecek</span>
+                    <span class="ub-data-value qty">${formatNumber(totals.adet)}</span>
+                </div>
+                <div class="ub-data-cell">
+                    <span class="ub-data-label">Sipariş</span>
+                    <span class="ub-data-value">${formatNumber(totals.siparis)}</span>
+                </div>
+                <div class="ub-data-cell">
+                    <span class="ub-data-label">Üretimde / Müsait</span>
+                    ${renderProductionAvailability({ UretimToplamAdet: totals.uretim, UretimMusaitAdet: totals.musait })}
+                </div>
+                <div class="ub-data-cell">
+                    <span class="ub-data-label">Stok Durumu</span>
+                    ${renderStockStatus({ StokDepodaki: totals.stokDepodaki, StokGorevdeki: totals.stokGorevdeki, StokBosta: totals.stokBosta })}
+                </div>
+                <div class="ub-total-meta">${totals.enYakinKargo ? 'En yakın ' + escapeHtml(totals.enYakinKargo.split(' ')[0]) : 'Tarih yok'}</div>
+                <div class="ub-total-match">${formatNumber(totals.matched)} tanımlı / ${formatNumber(totals.unmatched)} tanımsız</div>
+            </div>
+        `;
+
         grid.innerHTML = html;
+    }
+
+    function calculateSummaryTotals(items) {
+        return items.reduce((totals, item) => {
+            totals.adet += Number(item.ToplamAdet || 0);
+            totals.siparis += Number(item.SiparisSayisi || 0);
+            totals.uretim += Number(item.UretimToplamAdet || 0);
+            totals.musait += Number(item.UretimMusaitAdet || 0);
+            totals.stokDepodaki += Number(item.StokDepodaki || 0);
+            totals.stokGorevdeki += Number(item.StokGorevdeki || 0);
+            totals.stokBosta += Number(item.StokBosta || 0);
+            if (Number(item.EslesenUrunNo || 0) > 0) {
+                totals.matched += 1;
+            } else {
+                totals.unmatched += 1;
+            }
+
+            const kargoDate = parseTurkishDate(item.EnYakinKargo);
+            if (kargoDate && (!totals.enYakinKargoDate || kargoDate < totals.enYakinKargoDate)) {
+                totals.enYakinKargoDate = kargoDate;
+                totals.enYakinKargo = item.EnYakinKargo || '';
+            }
+            return totals;
+        }, { adet: 0, siparis: 0, uretim: 0, musait: 0, stokDepodaki: 0, stokGorevdeki: 0, stokBosta: 0, matched: 0, unmatched: 0, enYakinKargo: '', enYakinKargoDate: null });
+    }
+
+    function renderProductionAvailability(item) {
+        const total = Number(item?.UretimToplamAdet || 0);
+        const available = Number(item?.UretimMusaitAdet || 0);
+
+        if (total <= 0 && available <= 0) {
+            return '<span class="ub-production-none">—</span>';
+        }
+
+        const availableClass = available > 0 ? 'available' : 'available empty';
+
+        return `
+            <span class="ub-production-cell" title="Üretimde: ${formatNumber(total)} / Müsait: ${formatNumber(available)}">
+                <span class="ub-production-pill total">${formatNumber(total)}</span>
+                <span class="ub-production-slash">/</span>
+                <span class="ub-production-pill ${availableClass}">${formatNumber(available)}</span>
+            </span>`;
+    }
+
+    function renderStockStatus(item) {
+        const depot = Number(item?.StokDepodaki ?? 0);
+        const task = Number(item?.StokGorevdeki ?? 0);
+        const free = Number(item?.StokBosta ?? 0);
+
+        if (item?.StokDepodaki === null && item?.StokGorevdeki === null && item?.StokBosta === null) {
+            return '<span class="ub-stock-none">—</span>';
+        }
+
+        const freeClass = free > 0 ? 'free' : 'free empty';
+
+        return `
+            <span class="ub-stock-cell" title="Depodaki: ${formatNumber(depot)} / Görevdeki: ${formatNumber(task)} / Boşta: ${formatNumber(free)}">
+                <span class="ub-stock-pill depot">${formatNumber(depot)}</span>
+                <span class="ub-stock-slash">/</span>
+                <span class="ub-stock-pill task">${formatNumber(task)}</span>
+                <span class="ub-stock-slash">/</span>
+                <span class="ub-stock-pill ${freeClass}">${formatNumber(free)}</span>
+            </span>`;
     }
 
     function getKargoBadge(kargoStr) {
@@ -812,6 +1054,10 @@
             }
         } catch (e) {}
         return null;
+    }
+
+    function formatNumber(value) {
+        return (Number(value) || 0).toLocaleString('tr-TR');
     }
 
     loadSummary();
