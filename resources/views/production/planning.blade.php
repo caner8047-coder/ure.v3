@@ -16,6 +16,7 @@
 <style>
     .planning-legacy-shell {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 26px;
     }
 
@@ -436,8 +437,6 @@
     .planning-board-wrapper {
         overflow-x: auto;
         padding-bottom: 12px;
-        margin-right: -20px; /* Kenar boşluklarını telafi et */
-        padding-right: 20px;
     }
 
     .planning-board {
