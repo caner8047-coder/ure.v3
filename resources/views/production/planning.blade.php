@@ -449,6 +449,45 @@
         min-height: 340px; /* Haftalıkta biraz daha uzun olabilir */
     }
 
+    /* ───── Özellik #3: Çoklu Personel Planlama Board'u ───── */
+    .multi-board-wrapper {
+        overflow-x: auto;
+        padding-bottom: 20px;
+        margin-right: -20px; padding-right: 20px;
+    }
+    .multi-board {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+        min-width: min-content;
+    }
+    .multi-col {
+        width: 320px; /* Sütun genişliği */
+        flex-shrink: 0;
+        background: rgba(249,250,251,0.5);
+        border: 1px solid var(--z-border-light);
+        border-radius: 8px;
+        padding: 16px;
+        transition: border-color 0.2s, background 0.2s;
+    }
+    .multi-col.is-drop-target {
+        border-color: var(--z-accent);
+        background: rgba(99,102,241,0.05);
+    }
+    .multi-col-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 16px; padding-bottom: 12px;
+        border-bottom: 2px solid var(--z-border-light);
+    }
+    .multi-col-title { font-weight: 800; color: var(--z-text); font-size: 1rem; }
+    .multi-col-badge {
+        background: var(--z-accent-soft); color: var(--z-accent);
+        padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 800;
+    }
+    .multi-task-list {
+        display: flex; flex-direction: column; gap: 12px; min-height: 150px;
+    }
+
     .planning-date-column {
         min-height: 264px;
         padding: 18px 20px 20px;
@@ -998,12 +1037,16 @@
 
             <div class="planning-view-switch" role="tablist" aria-label="Planlama görünümü">
                 <button class="planning-view-btn active" id="personnelViewButton" type="button" onclick="showPlanningView('personnel')">
-                    <i class="bi bi-people"></i>Personel Planlama
+                    <i class="bi bi-person"></i>Personel Planlama
+                </button>
+                <button class="planning-view-btn" id="multiViewButton" type="button" onclick="showPlanningView('multi')">
+                    <i class="bi bi-people"></i>Bölüm Planlama (Çoklu)
                 </button>
                 <button class="planning-view-btn" id="summaryViewButton" type="button" onclick="showPlanningView('summary')">
                     <i class="bi bi-list-check"></i>Sipariş Özeti
                 </button>
             </div>
+
 
             <div id="personnelPlanningView">
                 <div class="d-flex align-items-center justify-content-between mb-2">
@@ -1057,6 +1100,28 @@
                             <i class="bi bi-arrow-up-circle"></i>
                             <strong>Personel Seçin</strong>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Özellik #3: Çoklu Personel Planlama Board'u -->
+            <div id="multiPersonnelPlanningView" hidden>
+                <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                    <h3 class="planning-section-title mb-0">Bölüm Planlaması (Çoklu Personel)</h3>
+                    <div class="d-flex align-items-center gap-2">
+                        <select id="multiDeptSelect" class="form-select form-select-sm" style="width: 250px" onchange="loadMultiPersonnelTasks()">
+                            <option value="">Bölüm Seçin</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" type="button" onclick="loadMultiPersonnelTasks()">
+                            <i class="bi bi-arrow-clockwise"></i> Yenile
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="multi-board-wrapper" id="multiBoardWrapper">
+                    <div class="planning-empty-state" style="margin-top:40px">
+                        <i class="bi bi-diagram-3"></i>
+                        <strong>Bölüm Seçin</strong>
                     </div>
                 </div>
             </div>
@@ -1189,15 +1254,32 @@ function setPlanningStatus(label, tone = '') {
 
 function showPlanningView(view) {
     currentPlanningView = view;
-    const showSummary = view === 'summary';
+    
+    const isPersonel = view === 'personnel';
+    const isMulti = view === 'multi';
+    const isSummary = view === 'summary';
 
-    document.getElementById('personnelPlanningView').hidden = showSummary;
-    document.getElementById('summaryPlanningView').hidden = !showSummary;
-    document.getElementById('personnelViewButton').classList.toggle('active', !showSummary);
-    document.getElementById('summaryViewButton').classList.toggle('active', showSummary);
+    document.getElementById('personnelPlanningView').hidden = !isPersonel;
+    document.getElementById('multiPersonnelPlanningView').hidden = !isMulti;
+    document.getElementById('summaryPlanningView').hidden = !isSummary;
 
-    if (showSummary) {
+    document.getElementById('personnelViewButton').classList.toggle('active', isPersonel);
+    document.getElementById('multiViewButton').classList.toggle('active', isMulti);
+    document.getElementById('summaryViewButton').classList.toggle('active', isSummary);
+
+    if (isSummary) {
         loadSummary();
+    } else if (isMulti) {
+        if (!document.getElementById('multiDeptSelect').value) {
+            // İlk açılışta eğer bir departman varsa onu seç
+            const opt = document.querySelector('#multiDeptSelect option:nth-child(2)');
+            if (opt) {
+                document.getElementById('multiDeptSelect').value = opt.value;
+                loadMultiPersonnelTasks();
+            }
+        } else {
+            loadMultiPersonnelTasks();
+        }
     }
 }
 
@@ -1221,8 +1303,21 @@ function loadPersonelList() {
 
             // Hidden select güncelle (uyumluluk)
             select.innerHTML = '<option value="">Personel Seçin</option>';
+            
+            // Özellik #3: Departman Select Güncelle
+            const deptSelect = document.getElementById('multiDeptSelect');
+            const depts = new Map();
+            
             personnelData.forEach((p) => {
                 select.innerHTML += `<option value="${escapeHtml(p.PersonelNo)}">${escapeHtml(p.PersonelAdi)}</option>`;
+                if (p.BolumAdiNo && p.BolumAdi) {
+                    depts.set(p.BolumAdiNo, p.BolumAdi);
+                }
+            });
+
+            deptSelect.innerHTML = '<option value="">Bölüm Seçin</option>';
+            Array.from(depts.entries()).forEach(([id, name]) => {
+                deptSelect.innerHTML += `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`;
             });
 
             // Custom dropdown güncelle
@@ -2817,6 +2912,185 @@ function escapeJsString(value) {
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'")
         .replace(/\n/g, ' ');
+}
+
+/* ───── Özellik #3: Çoklu Personel Board'u ───── */
+function loadMultiPersonnelTasks() {
+    const deptId = document.getElementById('multiDeptSelect').value;
+    const wrapper = document.getElementById('multiBoardWrapper');
+    
+    if (!deptId) {
+        wrapper.innerHTML = `
+            <div class="planning-empty-state" style="margin-top:40px">
+                <i class="bi bi-diagram-3"></i>
+                <strong>Bölüm Seçin</strong>
+            </div>
+        `;
+        return;
+    }
+
+    wrapper.innerHTML = `<div class="text-center mt-5"><i class="bi bi-arrow-repeat" style="font-size:2rem;animation:spin 1s linear infinite;"></i><br>Bölüm görevleri yükleniyor...</div>`;
+
+    fetch(`/api/planning/department/${deptId}/tasks`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                wrapper.innerHTML = `<div class="alert alert-danger mx-3 mt-3">${escapeHtml(data.message || 'Yüklenemedi')}</div>`;
+                return;
+            }
+
+            const tasks = data.data || [];
+            if (!tasks.length) {
+                wrapper.innerHTML = `
+                    <div class="planning-empty-state" style="margin-top:40px">
+                        <i class="bi bi-inbox"></i>
+                        <strong>Bu bölümde aktif görev bulunamadı.</strong>
+                    </div>
+                `;
+                return;
+            }
+
+            // Görevleri personele göre grupla
+            const pGroup = new Map();
+            // Tüm departman personellerini de boş bile olsa çıkarabiliriz, ama şimdilik sadece görevi olanları veya depts map'den
+            personnelData.forEach(p => {
+                if (String(p.BolumAdiNo) === String(deptId)) {
+                    pGroup.set(String(p.PersonelNo), {
+                        name: p.PersonelAdi,
+                        no: p.PersonelNo,
+                        tasks: []
+                    });
+                }
+            });
+
+            tasks.forEach(t => {
+                const pno = String(t.PersonelNo);
+                if (!pGroup.has(pno)) {
+                    pGroup.set(pno, { name: t.PersonelAdi || 'Bilinmiyor', no: pno, tasks: [] });
+                }
+                pGroup.get(pno).tasks.push(t);
+            });
+
+            renderMultiBoard(Array.from(pGroup.values()));
+        })
+        .catch(err => {
+            wrapper.innerHTML = `<div class="alert alert-danger mx-3 mt-3">Hata: ${escapeHtml(String(err))}</div>`;
+        });
+}
+
+function renderMultiBoard(personnelGroups) {
+    const wrapper = document.getElementById('multiBoardWrapper');
+    
+    const html = `<div class="multi-board">` + personnelGroups.map(pg => {
+        const taskCards = pg.tasks.map(task => {
+            const dateInfo = normalizeDateInfo(task.GorevBaslamaTarihi);
+            const isLate = dateInfo.iso && dateInfo.iso < todayISODate();
+            const totalQty = parseInt(task.Adet, 10);
+            const state = planningTaskState(task, totalQty, parseInt(task.BekleyenAdet, 10));
+            const id = parseInt(task.No);
+            
+            return `
+                <div class="planning-task-card ${isLate ? 'is-late' : ''}" draggable="true" data-task-id="${id}">
+                    <div class="planning-task-header">
+                        <span class="planning-task-no">#${id}</span>
+                        ${isLate ? '<span class="planning-late-badge">Gecikti</span>' : ''}
+                    </div>
+                    <div class="planning-task-title">${escapeHtml(task.AraUrunAdi)}</div>
+                    
+                    <div class="planning-task-meta mt-1">
+                        <span><i class="bi bi-calendar3"></i> ${escapeHtml(dateInfo.text)}</span>
+                        <span><strong>${formatNumber(totalQty)}</strong> adet</span>
+                    </div>
+
+                    <div class="planning-task-status mt-2">
+                        <div class="planning-status-badge ${state.className}">
+                            <i class="bi ${state.icon}"></i> ${state.label}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="multi-col" data-personnel-no="${escapeHtml(pg.no)}">
+                <div class="multi-col-header">
+                    <span class="multi-col-title">${escapeHtml(pg.name)}</span>
+                    <span class="multi-col-badge">${pg.tasks.length} Görev</span>
+                </div>
+                <div class="multi-task-list">
+                    ${taskCards || '<div class="text-center text-muted" style="font-size:0.8rem;padding:20px;border:1px dashed #ccc;border-radius:6px">Görev yok</div>'}
+                </div>
+            </div>
+        `;
+    }).join('') + `</div>`;
+
+    wrapper.innerHTML = html;
+    bindMultiBoardDragDrop();
+}
+
+function bindMultiBoardDragDrop() {
+    const wrapper = document.getElementById('multiBoardWrapper');
+    
+    wrapper.querySelectorAll('.planning-task-card').forEach(card => {
+        card.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', card.dataset.taskId);
+            card.classList.add('is-dragging');
+        });
+        card.addEventListener('dragend', () => {
+            card.classList.remove('is-dragging');
+        });
+    });
+
+    wrapper.querySelectorAll('.multi-col').forEach(col => {
+        col.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            col.classList.add('is-drop-target');
+        });
+        col.addEventListener('dragleave', () => {
+            col.classList.remove('is-drop-target');
+        });
+        col.addEventListener('drop', (e) => {
+            e.preventDefault();
+            col.classList.remove('is-drop-target');
+            
+            const taskId = e.dataTransfer.getData('text/plain');
+            const targetPersonnelNo = col.dataset.personnelNo;
+            
+            if (!taskId || !targetPersonnelNo) return;
+            
+            const draggedCard = wrapper.querySelector(`.planning-task-card[data-task-id="${escapeCssValue(taskId)}"]`);
+            const sourceCol = draggedCard?.closest('.multi-col');
+            const sourcePersonnelNo = sourceCol?.dataset.personnelNo;
+
+            if (sourcePersonnelNo === targetPersonnelNo) return; // Aynı kişiye bırakıldıysa işlem yapma
+            
+            transferTaskToPersonnel(taskId, targetPersonnelNo);
+        });
+    });
+}
+
+function transferTaskToPersonnel(taskId, newPersonnelNo) {
+    Swal.fire({
+        title: 'Transfer Ediliyor...',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+    });
+
+    fetch(`/api/planning/task/${taskId}/transfer`, {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ target_personnel_no: newPersonnelNo })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            Swal.fire('Hata', data.message || 'Transfer başarısız.', 'error');
+            return;
+        }
+        Swal.fire({ title: 'Transfer Başarılı', icon: 'success', timer: 1200, showConfirmButton: false });
+        loadMultiPersonnelTasks(); // Board'u yenile
+    })
+    .catch(err => Swal.fire('Hata', String(err), 'error'));
 }
 
 /* ───── Özellik #8: Otomatik Yenileme (30sn) ───── */

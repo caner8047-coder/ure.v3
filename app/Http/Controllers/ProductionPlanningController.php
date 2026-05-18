@@ -627,6 +627,49 @@ class ProductionPlanningController extends Controller
     }
 
     /**
+     * Belirli bir bölümdeki tüm personelin aktif görevlerini getirir (Çoklu Personel Planlama Board'u için).
+     */
+    public function getDepartmentPersonnelTasks($departmentId)
+    {
+        $departmentId = intval($departmentId);
+        if ($departmentId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Geçersiz bölüm ID.']);
+        }
+
+        $query = DB::table('tbPersonelGorev as pg')
+            ->join('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->join('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
+            ->join('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->where('pg.BolumAdiNo', $departmentId)
+            ->where(function ($q) {
+                $q->where('pg.Adet', '>', 0)
+                  ->orWhere('pg.BekleyenAdet', '>', 0);
+            })
+            ->where(function ($q) {
+                $q->where('pg.BekleyenAdet', '>', 0)
+                  ->orWhereRaw($this->pendingApprovalSql('pg.Onay'));
+            })
+            ->select(
+                'pg.No',
+                'pg.PersonelNo',
+                'p.PersonelAdi',
+                'pg.GorevBaslamaTarihi',
+                'au.AraUrunAdi',
+                'au.No as AraUrunAdiNo',
+                'b.BolumAdi',
+                'pg.Adet',
+                'pg.BekleyenAdet',
+                'pg.Onay',
+                'au.Yol'
+            )
+            // Tarihe göre sıralayalım
+            ->orderByRaw("STR_TO_DATE(SUBSTRING(pg.GorevBaslamaTarihi, 1, 10), '%d/%m/%Y') ASC")
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $query]);
+    }
+
+    /**
      * İlgili bölüm için havuza düşen (atanmamış) görevleri getirir.
      */
     public function getPoolTasks($departmentId)
