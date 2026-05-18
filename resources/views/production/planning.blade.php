@@ -1749,9 +1749,6 @@ function updateWorkloadBar(tasks, overdueCount) {
     bar.classList.add('is-visible');
     progressWrap.style.display = '';
 }
-}
-
-
 
 function renderTaskCard(task) {
     const id = Number(task.No || 0);
