@@ -1108,11 +1108,11 @@
             <div id="multiPersonnelPlanningView" hidden>
                 <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
                     <h3 class="planning-section-title mb-0">Bölüm Planlaması (Çoklu Personel)</h3>
-                    <div class="d-flex align-items-center gap-2">
-                        <select id="multiDeptSelect" class="form-select form-select-sm" style="width: 250px" onchange="loadMultiPersonnelTasks()">
+                    <div class="d-flex align-items-center gap-2" style="flex: 1; max-width: 400px; justify-content: flex-end;">
+                        <select id="multiDeptSelect" class="form-select form-select-sm" style="flex: 1;" onchange="loadMultiPersonnelTasks()">
                             <option value="">Bölüm Seçin</option>
                         </select>
-                        <button class="btn btn-primary btn-sm" type="button" onclick="loadMultiPersonnelTasks()">
+                        <button class="btn btn-primary btn-sm flex-shrink-0" type="button" onclick="loadMultiPersonnelTasks()">
                             <i class="bi bi-arrow-clockwise"></i> Yenile
                         </button>
                     </div>
@@ -2987,22 +2987,17 @@ function renderMultiBoard(personnelGroups) {
             const id = parseInt(task.No);
             
             return `
-                <div class="planning-task-card ${isLate ? 'is-late' : ''}" draggable="true" data-task-id="${id}">
-                    <div class="planning-task-header">
-                        <span class="planning-task-no">#${id}</span>
-                        ${isLate ? '<span class="planning-late-badge">Gecikti</span>' : ''}
-                    </div>
-                    <div class="planning-task-title">${escapeHtml(task.AraUrunAdi)}</div>
-                    
-                    <div class="planning-task-meta mt-1">
-                        <span><i class="bi bi-calendar3"></i> ${escapeHtml(dateInfo.text)}</span>
-                        <span><strong>${formatNumber(totalQty)}</strong> adet</span>
-                    </div>
-
-                    <div class="planning-task-status mt-2">
-                        <div class="planning-status-badge ${state.className}">
-                            <i class="bi ${state.icon}"></i> ${state.label}
+                <div class="planning-task-card ${state.className} ${isLate ? 'is-late' : ''}" draggable="true" data-task-id="${id}">
+                    <div class="planning-task-copy">
+                        <div style="display:flex; justify-content:space-between; margin-bottom: 4px;">
+                            <strong>#${id} ${isLate ? '<span style="color:#b91c1c;">Gecikti</span>' : ''}</strong>
                         </div>
+                        ${escapeHtml(task.AraUrunAdi || 'Bilinmiyor')}<br>
+                        <i class="bi bi-calendar3"></i> ${escapeHtml(dateInfo.text)}<br>
+                        <strong>Adet:</strong> ${formatNumber(totalQty)}
+                    </div>
+                    <div class="planning-task-status mt-2">
+                        <i class="bi ${state.icon}"></i> ${state.label}
                     </div>
                 </div>
             `;
