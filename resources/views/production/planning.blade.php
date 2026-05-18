@@ -425,11 +425,28 @@
         font-weight: 700;
     }
 
+    .planning-board-wrapper {
+        overflow-x: auto;
+        padding-bottom: 12px;
+        margin-right: -20px; /* Kenar boşluklarını telafi et */
+        padding-right: 20px;
+    }
+
     .planning-board {
         display: grid;
         grid-template-columns: repeat(4, minmax(230px, 1fr));
         gap: 26px 34px;
         align-items: start;
+        min-width: min-content; /* Grid'in scroll içinde sıkışmasını engeller */
+    }
+
+    /* ───── Özellik #6: Haftalık Takvim Görünümü ───── */
+    .planning-board.is-weekly-view {
+        grid-template-columns: repeat(7, minmax(240px, 1fr));
+        gap: 16px 20px;
+    }
+    .planning-board.is-weekly-view .planning-date-column {
+        min-height: 340px; /* Haftalıkta biraz daha uzun olabilir */
     }
 
     .planning-date-column {
@@ -989,7 +1006,16 @@
             </div>
 
             <div id="personnelPlanningView">
-                <h3 class="planning-section-title" id="departmentTitle">Görev Planlaması</h3>
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h3 class="planning-section-title mb-0" id="departmentTitle">Görev Planlaması</h3>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <input type="radio" class="btn-check" name="boardMode" id="modeDynamic" value="dynamic" autocomplete="off" checked onchange="handleBoardModeChange()">
+                        <label class="btn btn-outline-secondary" for="modeDynamic" title="Sadece dolu olan veya eklenen günleri gösterir"><i class="bi bi-kanban"></i> Standart</label>
+                        
+                        <input type="radio" class="btn-check" name="boardMode" id="modeWeekly" value="weekly" autocomplete="off" onchange="handleBoardModeChange()">
+                        <label class="btn btn-outline-secondary" for="modeWeekly" title="Pazartesi'den Pazar'a 7 günlük takvim görünümü"><i class="bi bi-calendar-week"></i> Haftalık Takvim</label>
+                    </div>
+                </div>
                 <div class="planning-meta-row">
                     <span class="planning-chip"><i class="bi bi-person"></i><span id="planningSelectedPersonnel">Personel seçilmedi</span></span>
                     <span class="planning-chip"><i class="bi bi-list-task"></i><span id="taskCount">0 görev</span></span>
@@ -1025,10 +1051,12 @@
                     </div>
                 </div>
 
-                <div id="personelTasksArea" class="planning-board">
-                    <div class="planning-empty-state" style="grid-column: 1 / -1;">
-                        <i class="bi bi-arrow-up-circle"></i>
-                        <strong>Personel Seçin</strong>
+                <div class="planning-board-wrapper">
+                    <div id="personelTasksArea" class="planning-board">
+                        <div class="planning-empty-state" style="grid-column: 1 / -1;">
+                            <i class="bi bi-arrow-up-circle"></i>
+                            <strong>Personel Seçin</strong>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1375,6 +1403,40 @@ function handlePersonnelChange() {
 
     currentPersonelNo = selected;
     loadPersonelTasks();
+}
+
+let currentBoardMode = 'dynamic';
+
+function handleBoardModeChange() {
+    const radio = document.querySelector('input[name="boardMode"]:checked');
+    if (radio) currentBoardMode = radio.value;
+    
+    const board = document.getElementById('personelTasksArea');
+    if (currentBoardMode === 'weekly') {
+        board.classList.add('is-weekly-view');
+        // Haftanın 7 gününü pending empty date keys'e ekleyelim
+        const now = new Date();
+        const day = now.getDay();
+        const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Pazartesi'yi bul
+        const monday = new Date(now.setDate(diff));
+        
+        for(let i = 0; i < 7; i++) {
+            const d = new Date(monday);
+            d.setDate(monday.getDate() + i);
+            const iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            pendingEmptyDateKeys.add(iso);
+        }
+    } else {
+        board.classList.remove('is-weekly-view');
+        // Standart moda geçince fazladan boş tarihleri temizleyelim (tümünü silmiyorum ki kullanıcı eklediyse dursun)
+        // Eğer istenirse pendingEmptyDateKeys.clear() yapılabilir ama kullanıcı eklediği tarihleri kaybeder.
+        // Şimdilik sadece haftalık günlerin boş olanlarını ayıklayabiliriz ama temizleyip baştan yüklemek en temizi.
+        pendingEmptyDateKeys.clear();
+    }
+    
+    if (currentPersonelNo) {
+        loadPersonelTasks();
+    }
 }
 
 function loadPersonelTasks() {
