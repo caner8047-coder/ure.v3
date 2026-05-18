@@ -636,6 +636,10 @@ class ProductionPlanningController extends Controller
             return response()->json(['success' => false, 'message' => 'Geçersiz bölüm ID.']);
         }
 
+        $nameSql = DB::connection()->getDriverName() === 'sqlite'
+            ? "TRIM(IFNULL(p.Ad, '') || ' ' || IFNULL(p.Soyad, '')) as PersonelAdi"
+            : "TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as PersonelAdi";
+
         $query = DB::table('tbPersonelGorev as pg')
             ->join('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
             ->join('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
@@ -652,7 +656,7 @@ class ProductionPlanningController extends Controller
             ->select(
                 'pg.No',
                 'pg.PersonelNo',
-                'p.PersonelAdi',
+                DB::raw($nameSql),
                 'pg.GorevBaslamaTarihi',
                 'au.AraUrunAdi',
                 'au.No as AraUrunAdiNo',
