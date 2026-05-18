@@ -627,6 +627,48 @@ class ProductionPlanningController extends Controller
     }
 
     /**
+     * İlgili bölüm için havuza düşen (atanmamış) görevleri getirir.
+     */
+    public function getPoolTasks($departmentId)
+    {
+        $departmentId = intval($departmentId);
+        if ($departmentId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Geçersiz bölüm ID.']);
+        }
+
+        if (!Schema::hasTable('tbBolumHavuz')) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $query = DB::table('tbBolumHavuz as bh')
+            ->leftJoin('tbAraUrun as au', 'bh.AraUrunAdiNo', '=', 'au.No')
+            ->where('bh.BolumAdiNo', $departmentId)
+            ->where('bh.Adet', '>', 0)
+            ->select(
+                'bh.No',
+                'bh.AraUrunAdiNo',
+                'au.AraUrunAdi',
+                'bh.BolumAdiNo',
+                'bh.Adet',
+                'bh.ToplamAdet'
+            );
+
+        if (Schema::hasColumn('tbBolumHavuz', 'SiparisSatirNo')) {
+            $query->addSelect('bh.SiparisSatirNo');
+        }
+        if (Schema::hasColumn('tbBolumHavuz', 'SiparisNo')) {
+            $query->addSelect('bh.SiparisNo');
+        }
+        if (Schema::hasColumn('tbBolumHavuz', 'OzelUretimNo')) {
+            $query->addSelect('bh.OzelUretimNo');
+        }
+
+        $poolTasks = $query->orderBy('bh.No', 'asc')->get();
+
+        return response()->json(['success' => true, 'data' => $poolTasks]);
+    }
+
+    /**
      * Personel listesini getirir (bölüm ve aktif görev sayısı ile).
      */
     public function getPersonnelList()
@@ -793,6 +835,101 @@ class ProductionPlanningController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => "Adet {$currentTotal} → {$targetQuantity} olarak güncellendi.",
+            ]);
+        });
+    }
+
+    /**
+     * Havuzdan personelin belirli bir tarihine görev atar (Sürükle-Bırak).
+     */
+    public function assignFromPool(Request $request)
+    {
+        $poolId = intval($request->input('pool_id'));
+        $personnelNo = $request->input('personnel_no');
+        $targetDate = $request->input('target_date', date('Y-m-d'));
+
+        if ($poolId <= 0 || empty($personnelNo)) {
+            return response()->json(['success' => false, 'message' => 'Eksik parametreler.'], 422);
+        }
+
+        return DB::transaction(function () use ($poolId, $personnelNo, $targetDate) {
+            $pool = DB::table('tbBolumHavuz')->where('No', $poolId)->lockForUpdate()->first();
+            if (!$pool) {
+                return response()->json(['success' => false, 'message' => 'Havuz görevi bulunamadı (önceden atanmış olabilir).'], 404);
+            }
+
+            $personnel = DB::table('tbPersonel')->where('PersonelNo', $personnelNo)->first();
+            if (!$personnel) {
+                return response()->json(['success' => false, 'message' => 'Personel bulunamadı.'], 404);
+            }
+
+            $bomService = app(BomService::class);
+
+            // Tüm havuz adetini personele verelim
+            $assignedQty = intval($pool->Adet ?? 0);
+            if ($assignedQty <= 0) {
+                return response()->json(['success' => false, 'message' => 'Bu havuz kaydında atanabilir adet yok.'], 422);
+            }
+
+            // Yeni personel görevi
+            $insertData = [
+                'PersonelNo' => $personnelNo,
+                'AraUrunAdiNo' => $pool->AraUrunAdiNo,
+                'BolumAdiNo' => $pool->BolumAdiNo,
+                'Adet' => 0, // BomService bölecek
+                'BekleyenAdet' => 0, // BomService bölecek
+                'GorevBaslamaTarihi' => date('Y-m-d 00:00:00', strtotime($targetDate)),
+                'GorevDurumu' => 'Aktif',
+                'Onay' => null,
+            ];
+
+            if (Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo') && isset($pool->SiparisSatirNo)) {
+                $insertData['SiparisSatirNo'] = intval($pool->SiparisSatirNo);
+            }
+            if (Schema::hasColumn('tbPersonelGorev', 'SiparisNo') && isset($pool->SiparisNo)) {
+                $insertData['SiparisNo'] = $pool->SiparisNo;
+            }
+            if (Schema::hasColumn('tbPersonelGorev', 'OzelUretimNo') && isset($pool->OzelUretimNo)) {
+                $insertData['OzelUretimNo'] = $pool->OzelUretimNo;
+            }
+
+            // Miktar hesaplama
+            $dummyTask = (object) $insertData;
+            $split = $bomService->personnelTaskReadySplit($dummyTask, $assignedQty);
+            $insertData['Adet'] = intval($split['ready']);
+            $insertData['BekleyenAdet'] = intval($split['waiting']);
+
+            $newTaskId = DB::table('tbPersonelGorev')->insertGetId($insertData);
+            $newTask = DB::table('tbPersonelGorev')->where('No', $newTaskId)->first();
+
+            // Havuzdan düş (tamamını aldık)
+            $newToplam = max(0, intval($pool->ToplamAdet ?? 0) - $assignedQty);
+            if ($newToplam <= 0) {
+                DB::table('tbBolumHavuz')->where('No', $poolId)->delete();
+            } else {
+                DB::table('tbBolumHavuz')->where('No', $poolId)->update([
+                    'ToplamAdet' => $newToplam,
+                    'Adet' => 0, // Adet 0landı ama toplam duruyor
+                ]);
+            }
+
+            // Aynı sipariş/ürün/tarihli görevleri birleştir
+            $this->mergeDuplicatePersonnelTasks($personnelNo);
+
+            $bomService->personelGorevTabloGuncelle(strval($pool->AraUrunAdiNo));
+
+            $this->logPlanningEvent('task_assigned_by_admin', null, $newTask, [
+                'next_step_human' => 'Personel gorevi uretmesi bekleniyor.',
+                'context' => [
+                    'source_pool_no' => $poolId,
+                    'assigned_qty' => $assignedQty,
+                    'target_date' => $targetDate,
+                ],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Havuzdan {$assignedQty} adet görev personele atandı.",
             ]);
         });
     }

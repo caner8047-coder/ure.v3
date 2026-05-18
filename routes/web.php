@@ -223,6 +223,8 @@ Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () 
     Route::put('/task/{id}/date', [ProductionPlanningController::class, 'updateTaskDate']);
     Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
     Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
+    Route::get('/department/{id}/pool', [ProductionPlanningController::class, 'getPoolTasks']);
+    Route::post('/pool/assign', [ProductionPlanningController::class, 'assignFromPool']);
     Route::put('/task/{id}/quantity', [ProductionPlanningController::class, 'setTaskQuantity']);
     Route::get('/task/{id}/history', [ProductionPlanningController::class, 'getTaskHistory']);
 });

@@ -231,6 +231,83 @@
     .planning-tl-meta { font-size: 0.7rem; color: var(--z-text-secondary); margin-top: 2px; }
     .planning-tl-empty { text-align: center; padding: 20px; color: var(--z-text-secondary); font-size: 0.85rem; }
 
+    /* ───── Özellik #4: Havuz Kenar Çubuğu ───── */
+    .pool-sidebar {
+        position: fixed;
+        top: 0; right: -400px;
+        width: 380px; height: 100vh;
+        background: var(--z-bg);
+        box-shadow: -4px 0 24px rgba(0,0,0,0.1);
+        z-index: 1050;
+        transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        flex-direction: column;
+    }
+    .pool-sidebar.is-open { right: 0; }
+    .pool-sidebar-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--z-border-light);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: rgba(249,250,251,0.5);
+    }
+    .pool-sidebar-title { font-size: 1.1rem; font-weight: 800; color: var(--z-text); display: flex; align-items: center; gap: 8px; }
+    .pool-sidebar-close {
+        background: transparent; border: none; font-size: 1.2rem;
+        color: var(--z-text-secondary); cursor: pointer; padding: 4px; border-radius: 6px;
+    }
+    .pool-sidebar-close:hover { background: var(--z-bg-soft); color: var(--z-text); }
+    .pool-sidebar-body {
+        flex: 1; overflow-y: auto; padding: 16px; background: var(--z-bg-soft);
+    }
+    .pool-card {
+        background: #fff;
+        border: 1px solid var(--z-border-light);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+        cursor: grab;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+    .pool-card:active { cursor: grabbing; }
+    .pool-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-color: var(--z-accent-soft); }
+    .pool-card.is-dragging { opacity: 0.5; border-style: dashed; }
+    .pool-card-title { font-size: 0.9rem; font-weight: 700; color: var(--z-text); margin-bottom: 6px; line-height: 1.2; }
+    .pool-card-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--z-text-secondary); }
+    .pool-card-qty { font-weight: 800; color: var(--z-accent); }
+    .pool-card-actions { display: flex; justify-content: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--z-border-light); }
+    .pool-assign-btn { font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; }
+
+    .pool-toggle-btn {
+        position: fixed;
+        bottom: 30px; right: 30px;
+        width: 56px; height: 56px;
+        border-radius: 50%;
+        background: var(--z-accent);
+        color: #fff;
+        border: none;
+        box-shadow: 0 4px 16px rgba(99,102,241,0.4);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.5rem;
+        cursor: pointer;
+        z-index: 1040;
+        transition: transform 0.2s, background 0.2s;
+    }
+    .pool-toggle-btn:hover { transform: scale(1.05); background: #4f46e5; }
+    .pool-toggle-badge {
+        position: absolute; top: -2px; right: -2px;
+        background: #ef4444; color: #fff; font-size: 0.7rem; font-weight: 800;
+        padding: 2px 6px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .pool-overlay {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.4); z-index: 1045;
+        opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    }
+    .pool-overlay.is-open { opacity: 1; pointer-events: auto; }
+
     .planning-view-switch {
         display: flex;
         flex-wrap: wrap;
@@ -1004,6 +1081,27 @@
         </section>
     </div>
 
+    <!-- Özellik #4: Havuz Kenar Çubuğu -->
+    <button class="pool-toggle-btn" onclick="togglePoolSidebar()" title="Havuzdaki Görevler" style="display:none" id="poolToggleBtn">
+        <i class="bi bi-inbox-fill"></i>
+        <span class="pool-toggle-badge" id="poolToggleBadge" style="display:none">0</span>
+    </button>
+    <div class="pool-overlay" id="poolOverlay" onclick="togglePoolSidebar()"></div>
+    <aside class="pool-sidebar" id="poolSidebar">
+        <div class="pool-sidebar-header">
+            <div class="pool-sidebar-title">
+                <i class="bi bi-inbox text-primary"></i> Havuzdaki Görevler
+            </div>
+            <button class="pool-sidebar-close" onclick="togglePoolSidebar()"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="pool-sidebar-body" id="poolSidebarBody">
+            <div class="text-center text-muted mt-4">
+                <i class="bi bi-arrow-repeat" style="font-size:1.5rem;animation:spin 1s linear infinite;display:block;margin-bottom:8px"></i>
+                Yükleniyor...
+            </div>
+        </div>
+    </aside>
+
     <div class="modal fade" id="dateModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-sm">
             <div class="modal-content">
@@ -1316,6 +1414,23 @@ function loadPersonelTasks() {
             renderTaskBoard(tasks);
             setPlanningStamp();
             setPlanningStatus(tasks.length ? 'Akış aktif' : 'Boş plan', tasks.length ? 'success' : '');
+
+            // Havuz kontrolü için departman no'yu bul ve butonu göster
+            const p = personnelData.find(x => String(x.PersonelNo) === String(currentPersonelNo));
+            if (p && parseInt(p.BolumAdiNo || 0) > 0) {
+                document.getElementById('poolToggleBtn').style.display = 'flex';
+                // Havuz sayısı çek
+                fetch(`/api/planning/department/${p.BolumAdiNo}/pool`)
+                    .then(r => r.json())
+                    .then(pdata => {
+                        updatePoolBadge(pdata.success ? (pdata.data || []).length : 0);
+                        if (document.getElementById('poolSidebar').classList.contains('is-open')) {
+                            loadPoolTasks();
+                        }
+                    });
+            } else {
+                document.getElementById('poolToggleBtn').style.display = 'none';
+            }
         })
         .catch(() => {
             area.innerHTML = '<div class="alert alert-danger" style="grid-column: 1 / -1;">Görevler yüklenirken hata oluştu.</div>';
@@ -1333,6 +1448,7 @@ function renderEmptyPersonnelState() {
             <strong>Personel Seçin</strong>
         </div>
     `;
+    document.getElementById('poolToggleBtn').style.display = 'none';
     if (typeof updateWorkloadBar === 'function') updateWorkloadBar([], 0);
 }
 
@@ -1761,12 +1877,24 @@ function bindPlanningDragDrop() {
         column.addEventListener('drop', (event) => {
             event.preventDefault();
             column.classList.remove('is-drop-target');
-            const taskId = event.dataTransfer.getData('text/plain');
+            
             const newDate = column.dataset.isoDate;
+            if (!newDate) return;
+
+            // Havuzdan gelen sürükle-bırak kontrolü
+            const poolId = event.dataTransfer.getData('application/pool-id');
+            if (poolId) {
+                assignPoolTask(poolId, newDate);
+                return;
+            }
+
+            // Normal görev tarihi değiştirme
+            const taskId = event.dataTransfer.getData('text/plain');
+            if (!taskId) return;
+            
             const draggedCard = document.querySelector(`.planning-task-card[data-task-id="${escapeCssValue(taskId)}"]`);
             const oldDate = draggedCard?.closest('.planning-date-column')?.dataset.isoDate || '';
 
-            if (!taskId || !newDate) return;
             if (oldDate) pendingEmptyDateKeys.add(oldDate);
             updateTaskDate(taskId, newDate, true);
         });
@@ -2042,7 +2170,6 @@ function executeReturnToPoolFromModal(taskId) {
         method: 'DELETE',
         headers: csrfHeaders(),
     })
-        .then((r) => r.json())
         .then((data) => {
             if (!data.success) {
                 Swal.fire('Hata', data.message || 'İade başarısız.', 'error');
@@ -2059,6 +2186,135 @@ function executeReturnToPoolFromModal(taskId) {
             loadPersonelTasks();
         })
         .catch((error) => Swal.fire('Hata', String(error), 'error'));
+}
+
+/* ───── Özellik #4: Havuz Kenar Çubuğu & Atama ───── */
+function togglePoolSidebar() {
+    const sidebar = document.getElementById('poolSidebar');
+    const overlay = document.getElementById('poolOverlay');
+    const isOpen = sidebar.classList.contains('is-open');
+
+    if (isOpen) {
+        sidebar.classList.remove('is-open');
+        overlay.classList.remove('is-open');
+    } else {
+        sidebar.classList.add('is-open');
+        overlay.classList.add('is-open');
+        loadPoolTasks();
+    }
+}
+
+function loadPoolTasks() {
+    const body = document.getElementById('poolSidebarBody');
+    const p = personnelData.find(x => String(x.PersonelNo) === String(currentPersonelNo));
+    const deptId = p ? parseInt(p.BolumAdiNo || 0) : 0;
+
+    if (!deptId) {
+        body.innerHTML = '<div class="text-center text-muted mt-4">Personel bölümü bulunamadı.</div>';
+        return;
+    }
+
+    body.innerHTML = '<div class="text-center text-muted mt-4"><i class="bi bi-arrow-repeat" style="font-size:1.5rem;animation:spin 1s linear infinite;display:block;margin-bottom:8px"></i>Yükleniyor...</div>';
+
+    fetch(`/api/planning/department/${deptId}/pool`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                body.innerHTML = `<div class="alert alert-danger">${escapeHtml(data.message || 'Yüklenemedi')}</div>`;
+                return;
+            }
+
+            const tasks = data.data || [];
+            updatePoolBadge(tasks.length);
+
+            if (!tasks.length) {
+                body.innerHTML = `
+                    <div style="text-align:center;padding:40px 20px;color:var(--z-text-secondary)">
+                        <i class="bi bi-inbox" style="font-size:2.5rem;display:block;margin-bottom:12px;opacity:0.5"></i>
+                        Bu bölüm için havuzda bekleyen<br>görev bulunmuyor.
+                    </div>`;
+                return;
+            }
+
+            body.innerHTML = tasks.map(t => {
+                const id = parseInt(t.No);
+                const qty = parseInt(t.Adet);
+                const name = escapeHtml(t.AraUrunAdi || 'Bilinmiyor');
+                return `
+                    <div class="pool-card" draggable="true" data-pool-id="${id}">
+                        <div class="pool-card-title">${name}</div>
+                        <div class="pool-card-meta">
+                            <span>Sipariş: ${escapeHtml(t.SiparisNo || '-')}</span>
+                            <span class="pool-card-qty">${formatNumber(qty)} adet</span>
+                        </div>
+                        <div class="pool-card-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary pool-assign-btn" onclick="assignPoolTask(${id})">
+                                <i class="bi bi-plus-lg"></i> Personele Ata
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Sürükle bırak bağla
+            body.querySelectorAll('.pool-card').forEach(card => {
+                card.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('application/pool-id', card.dataset.poolId);
+                    card.classList.add('is-dragging');
+                });
+                card.addEventListener('dragend', () => {
+                    card.classList.remove('is-dragging');
+                });
+            });
+        })
+        .catch(err => {
+            body.innerHTML = `<div class="alert alert-danger">Hata: ${escapeHtml(String(err))}</div>`;
+        });
+}
+
+function updatePoolBadge(count) {
+    const badge = document.getElementById('poolToggleBadge');
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : count;
+        badge.style.display = '';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function assignPoolTask(poolId, targetIsoDate = null) {
+    if (!currentPersonelNo) return;
+    const dateStr = targetIsoDate || todayISODate();
+
+    Swal.fire({
+        title: 'Atanıyor...',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+    });
+
+    fetch('/api/planning/pool/assign', {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+            pool_id: poolId,
+            personnel_no: currentPersonelNo,
+            target_date: dateStr
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            Swal.fire('Hata', data.message || 'Atama başarısız.', 'error');
+            return;
+        }
+        Swal.fire({ title: 'Atandı', icon: 'success', timer: 1200, showConfirmButton: false });
+        loadPersonelTasks(); // Ana tabloyu yenile
+        if (document.getElementById('poolSidebar').classList.contains('is-open')) {
+            loadPoolTasks(); // Havuzu yenile
+        }
+    })
+    .catch(err => Swal.fire('Hata', String(err), 'error'));
 }
 
 /* ───── Özellik #7: Görev Geçmişi Timeline ───── */
