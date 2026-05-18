@@ -726,6 +726,7 @@ class ProductionPlanningController extends Controller
             ->where('p.BolumAdiNo', '!=', 0)
             ->select(
                 'p.PersonelNo',
+                'p.BolumAdiNo',
                 DB::raw($nameSql),
                 DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
                 DB::raw("IFNULL(gs.gorev_sayisi, 0) as aktif_gorev_sayisi")
