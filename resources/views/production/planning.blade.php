@@ -81,18 +81,26 @@
     }
 
     .planning-controls {
-        display: grid;
-        grid-template-columns: minmax(220px, 300px) minmax(160px, 200px) minmax(150px, 220px) auto;
-        gap: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
         align-items: center;
-        margin-bottom: 28px;
+        margin-bottom: 20px;
     }
+
+    .planning-controls > * {
+        min-width: 0;
+    }
+    
+    #pssWrap { flex: 1 1 200px; max-width: 400px; }
+    #yeniTarih { flex: 0 1 150px; }
+    .planning-controls .btn { flex: 0 1 auto; white-space: nowrap; }
 
     .planning-controls .form-select,
     .planning-controls .form-control,
     .planning-controls .btn {
-        min-height: 46px;
-        font-size: 1rem;
+        min-height: 40px;
+        font-size: 0.95rem;
     }
 
     /* ───── Özellik #2: Aranabilir Personel Dropdown ───── */
@@ -453,16 +461,15 @@
     .multi-board-wrapper {
         overflow-x: auto;
         padding-bottom: 20px;
-        margin-right: -20px; padding-right: 20px;
     }
     .multi-board {
         display: flex;
-        gap: 20px;
+        gap: 16px;
         align-items: flex-start;
         min-width: min-content;
     }
     .multi-col {
-        width: 320px; /* Sütun genişliği */
+        width: 300px; /* Biraz daha minimal sütun genişliği */
         flex-shrink: 0;
         background: rgba(249,250,251,0.5);
         border: 1px solid var(--z-border-light);
