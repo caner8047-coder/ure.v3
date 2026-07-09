@@ -15,6 +15,9 @@ use App\Services\BomService;
 use App\Services\WorkOrderService;
 use App\Services\WorkOrderEventLogger;
 use App\Services\StockMovementLogger;
+use App\Http\Controllers\Order\OrderMatchController;
+use App\Http\Controllers\Order\OrderStockController;
+use App\Http\Controllers\Order\OrderSpecialProductionController;
 
 class SiparisApiController extends Controller
 {
@@ -82,9 +85,9 @@ class SiparisApiController extends Controller
                 case 'getOrders':
                     return $this->getOrders($request);
                 case 'matchProduct':
-                    return $this->matchProduct($request);
+                    return app(OrderMatchController::class)->matchProduct($request);
                 case 'clearOrderMatch':
-                    return $this->clearOrderMatch($request);
+                    return app(OrderMatchController::class)->clearOrderMatch($request);
                 case 'createOrderWorkOrders':
                     return $this->createOrderWorkOrders($request);
                 case 'createManualWorkOrder':
@@ -92,7 +95,7 @@ class SiparisApiController extends Controller
                 case 'passivateWithWorkOrderCancel':
                     return $this->passivateWithWorkOrderCancel($request);
                 case 'saveStockCodes':
-                    return $this->saveStockCodes($request);
+                    return app(OrderStockController::class)->saveStockCodes($request);
                 case 'getSummary':
                     return $this->getSummary($request);
                 case 'getProducts':
@@ -126,29 +129,29 @@ class SiparisApiController extends Controller
                 case 'clearAllOrders':
                     return $this->clearAllOrders($request);
                 case 'deductStock':
-                    return $this->deductStock($request);
+                    return app(OrderStockController::class)->deductStock($request);
                 case 'deductStockBulk':
-                    return $this->deductStockBulk($request);
+                    return app(OrderStockController::class)->deductStockBulk($request);
                 case 'undoDeductStock':
-                    return $this->undoDeductStock($request);
+                    return app(OrderStockController::class)->undoDeductStock($request);
                 case 'getThresholds':
-                    return $this->getThresholds($request);
+                    return app(OrderStockController::class)->getThresholds($request);
                 case 'saveThreshold':
-                    return $this->saveThreshold($request);
+                    return app(OrderStockController::class)->saveThreshold($request);
                 case 'deleteThreshold':
-                    return $this->deleteThreshold($request);
+                    return app(OrderStockController::class)->deleteThreshold($request);
                 case 'getCriticalStockAlerts':
-                    return $this->getCriticalStockAlerts($request);
+                    return app(OrderStockController::class)->getCriticalStockAlerts($request);
                 case 'resetThresholds':
-                    return $this->resetThresholds($request);
+                    return app(OrderStockController::class)->resetThresholds($request);
                 case 'rematchOrders':
-                    return $this->rematchOrders($request);
+                    return app(OrderMatchController::class)->rematchOrders($request);
                 case 'getMatchCache':
-                    return $this->getMatchCache($request);
+                    return app(OrderMatchController::class)->getMatchCache($request);
                 case 'addMatchCache':
-                    return $this->addMatchCache($request);
+                    return app(OrderMatchController::class)->addMatchCache($request);
                 case 'deleteMatchCache':
-                    return $this->deleteMatchCache($request);
+                    return app(OrderMatchController::class)->deleteMatchCache($request);
                 case 'getSetDefinitions':
                     return $this->getSetDefinitions($request);
                 case 'addSetDefinition':
@@ -158,13 +161,13 @@ class SiparisApiController extends Controller
                 case 'getWorkOrderHistory':
                     return $this->getWorkOrderHistory($request);
                 case 'getAvailableSpecialProductions':
-                    return $this->getAvailableSpecialProductions($request);
+                    return app(OrderSpecialProductionController::class)->getAvailableSpecialProductions($request);
                 case 'linkOrderToSpecialProduction':
-                    return $this->linkOrderToSpecialProduction($request);
+                    return app(OrderSpecialProductionController::class)->linkOrderToSpecialProduction($request);
                 case 'linkOrdersToSpecialProductionBulk':
-                    return $this->linkOrdersToSpecialProductionBulk($request);
+                    return app(OrderSpecialProductionController::class)->linkOrdersToSpecialProductionBulk($request);
                 case 'cancelWipAllocation':
-                    return $this->cancelWipAllocation($request);
+                    return app(OrderSpecialProductionController::class)->cancelWipAllocation($request);
                 case 'onlyUpdateStatusBulk':
                     return $this->onlyUpdateStatusBulk($request);
                 case 'fixKayipOzelUretim':
@@ -1692,7 +1695,7 @@ class SiparisApiController extends Controller
 
         $request->merge(['rows' => is_array($rows) ? $rows : []]);
 
-        return app(AdminDatabaseController::class)->importModule($request, $module);
+        return app(\App\Http\Controllers\Admin\AdminImportController::class)->importModule($request, $module);
     }
 
     // ================================================================

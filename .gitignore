@@ -32,5 +32,12 @@ Thumbs.db
 *.sql
 guncelleme_paketi_*
 plans/
+
+# Database backups and dumps
 storage/backups/
+storage/database_backups/
+storage/app/backups/
 storage/deployments/
+
+# Sensitive files
+deployment/*.command

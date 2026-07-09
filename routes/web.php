@@ -8,9 +8,19 @@ use App\Http\Controllers\SiparisApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\StocksController;
 use App\Http\Controllers\ReportsController;
-use App\Http\Controllers\AdminDatabaseController;
+use App\Http\Controllers\Admin\AdminDepartmentController;
+use App\Http\Controllers\Admin\AdminPersonnelController;
+use App\Http\Controllers\Admin\AdminComponentController;
+use App\Http\Controllers\Admin\AdminProductController;
+use App\Http\Controllers\Admin\AdminPoolTaskController;
+use App\Http\Controllers\Admin\AdminImportController;
+use App\Http\Controllers\Admin\AdminSettingsController;
+use App\Http\Controllers\Panel\PanelTaskController;
+use App\Http\Controllers\Panel\PanelAvailableTaskController;
+use App\Http\Controllers\Panel\PanelReportController;
+use App\Http\Controllers\Panel\PanelMessageController;
+use App\Http\Controllers\Panel\PanelDependencyController;
 use App\Http\Controllers\TopluIsEmriApiController;
-use App\Http\Controllers\PersonnelPanelController;
 use App\Http\Controllers\ProductionPlanningController;
 use App\Http\Controllers\WorkOrderCenterController;
 use App\Http\Controllers\WorkOrderPreviewController;
@@ -148,73 +158,73 @@ Route::prefix('api/reports')->middleware('auth')->group(function () {
 
 // ===== Database Admin API =====
 Route::prefix('api/database')->middleware(['auth', 'admin'])->group(function () {
-    Route::get('/personnel', [AdminDatabaseController::class, 'getPersonnel']);
-    Route::get('/personnel/idle', [AdminDatabaseController::class, 'getIdlePersonnel']);
-    Route::get('/personnel/production-overview', [AdminDatabaseController::class, 'getPersonnelProductionOverview']);
-    Route::post('/personnel', [AdminDatabaseController::class, 'storePersonnel']);
-    Route::put('/personnel/{id}', [AdminDatabaseController::class, 'updatePersonnel']);
-    Route::delete('/personnel/{id}', [AdminDatabaseController::class, 'deletePersonnel']);
-    Route::get('/personnel-workload', [AdminDatabaseController::class, 'getPersonnelWorkload']);
-    Route::get('/pool-tasks', [AdminDatabaseController::class, 'getPoolTasks']);
-    Route::post('/pool-tasks/{id}/assign', [AdminDatabaseController::class, 'assignPoolTask']);
-    Route::post('/pool-tasks', [AdminDatabaseController::class, 'storePoolTask']);
-    Route::put('/pool-tasks/{id}', [AdminDatabaseController::class, 'updatePoolTask']);
-    Route::delete('/pool-tasks/{id}', [AdminDatabaseController::class, 'deletePoolTask']);
-    Route::post('/pool-tasks/delete-by-product', [AdminDatabaseController::class, 'deletePoolTasksByProduct']);
-    Route::post('/pool-tasks/delete-all', [AdminDatabaseController::class, 'deleteAllPoolTasks']);
+    Route::get('/personnel', [AdminPersonnelController::class, 'getPersonnel']);
+    Route::get('/personnel/idle', [AdminPersonnelController::class, 'getIdlePersonnel']);
+    Route::get('/personnel/production-overview', [AdminPersonnelController::class, 'getPersonnelProductionOverview']);
+    Route::post('/personnel', [AdminPersonnelController::class, 'storePersonnel']);
+    Route::put('/personnel/{id}', [AdminPersonnelController::class, 'updatePersonnel']);
+    Route::delete('/personnel/{id}', [AdminPersonnelController::class, 'deletePersonnel']);
+    Route::get('/personnel-workload', [AdminPersonnelController::class, 'getPersonnelWorkload']);
+    Route::get('/pool-tasks', [AdminPoolTaskController::class, 'getPoolTasks']);
+    Route::post('/pool-tasks/{id}/assign', [AdminPoolTaskController::class, 'assignPoolTask']);
+    Route::post('/pool-tasks', [AdminPoolTaskController::class, 'storePoolTask']);
+    Route::put('/pool-tasks/{id}', [AdminPoolTaskController::class, 'updatePoolTask']);
+    Route::delete('/pool-tasks/{id}', [AdminPoolTaskController::class, 'deletePoolTask']);
+    Route::post('/pool-tasks/delete-by-product', [AdminPoolTaskController::class, 'deletePoolTasksByProduct']);
+    Route::post('/pool-tasks/delete-all', [AdminPoolTaskController::class, 'deleteAllPoolTasks']);
 
-    Route::get('/departments', [AdminDatabaseController::class, 'getDepartments']);
-    Route::post('/departments', [AdminDatabaseController::class, 'storeDepartment']);
-    Route::put('/departments/{id}', [AdminDatabaseController::class, 'updateDepartment']);
-    Route::delete('/departments/{id}', [AdminDatabaseController::class, 'deleteDepartment']);
+    Route::get('/departments', [AdminDepartmentController::class, 'getDepartments']);
+    Route::post('/departments', [AdminDepartmentController::class, 'storeDepartment']);
+    Route::put('/departments/{id}', [AdminDepartmentController::class, 'updateDepartment']);
+    Route::delete('/departments/{id}', [AdminDepartmentController::class, 'deleteDepartment']);
 
-    Route::get('/components', [AdminDatabaseController::class, 'getComponents']);
-    Route::post('/components', [AdminDatabaseController::class, 'storeComponent']);
-    Route::put('/components/{id}', [AdminDatabaseController::class, 'updateComponent']);
-    Route::delete('/components/{id}', [AdminDatabaseController::class, 'deleteComponent']);
-    Route::put('/components/{id}/bom-path', [AdminDatabaseController::class, 'updateComponentBomPath']);
-    Route::delete('/components/{id}/bom-path', [AdminDatabaseController::class, 'clearComponentBomPath']);
+    Route::get('/components', [AdminComponentController::class, 'getComponents']);
+    Route::post('/components', [AdminComponentController::class, 'storeComponent']);
+    Route::put('/components/{id}', [AdminComponentController::class, 'updateComponent']);
+    Route::delete('/components/{id}', [AdminComponentController::class, 'deleteComponent']);
+    Route::put('/components/{id}/bom-path', [AdminComponentController::class, 'updateComponentBomPath']);
+    Route::delete('/components/{id}/bom-path', [AdminComponentController::class, 'clearComponentBomPath']);
 
-    Route::get('/products', [AdminDatabaseController::class, 'getProducts']);
-    Route::post('/products', [AdminDatabaseController::class, 'storeProduct']);
-    Route::post('/products/merge-preview', [AdminDatabaseController::class, 'previewProductMerge']);
-    Route::post('/products/merge', [AdminDatabaseController::class, 'mergeProducts']);
-    Route::put('/products/{id}', [AdminDatabaseController::class, 'updateProduct']);
-    Route::delete('/products/{id}', [AdminDatabaseController::class, 'deleteProduct']);
-    Route::post('/products/{id}/image', [AdminDatabaseController::class, 'uploadProductImage']);
-    Route::post('/{module}/import', [AdminDatabaseController::class, 'importModule'])
+    Route::get('/products', [AdminProductController::class, 'getProducts']);
+    Route::post('/products', [AdminProductController::class, 'storeProduct']);
+    Route::post('/products/merge-preview', [AdminProductController::class, 'previewProductMerge']);
+    Route::post('/products/merge', [AdminProductController::class, 'mergeProducts']);
+    Route::put('/products/{id}', [AdminProductController::class, 'updateProduct']);
+    Route::delete('/products/{id}', [AdminProductController::class, 'deleteProduct']);
+    Route::post('/products/{id}/image', [AdminProductController::class, 'uploadProductImage']);
+    Route::post('/{module}/import', [AdminImportController::class, 'importModule'])
         ->where('module', 'personnel|departments|components|products');
 
-    Route::get('/components/{id}/bom-path-names', [AdminDatabaseController::class, 'getComponentBomPathNames']);
-    Route::get('/products/{id}/bom-path-names', [AdminDatabaseController::class, 'getProductBomPathNames']);
-    Route::post('/derive-product', [AdminDatabaseController::class, 'deriveProduct']);
+    Route::get('/components/{id}/bom-path-names', [AdminComponentController::class, 'getComponentBomPathNames']);
+    Route::get('/products/{id}/bom-path-names', [AdminProductController::class, 'getProductBomPathNames']);
+    Route::post('/derive-product', [AdminProductController::class, 'deriveProduct']);
 
-    Route::get('/product-settings/lookups', [AdminDatabaseController::class, 'getProductSettingsLookups']);
-    Route::get('/product-settings/{urunNo}', [AdminDatabaseController::class, 'getProductSettingsDetails']);
-    Route::post('/product-settings/update', [AdminDatabaseController::class, 'updateProductSettings']);
+    Route::get('/product-settings/lookups', [AdminSettingsController::class, 'getProductSettingsLookups']);
+    Route::get('/product-settings/{urunNo}', [AdminSettingsController::class, 'getProductSettingsDetails']);
+    Route::post('/product-settings/update', [AdminSettingsController::class, 'updateProductSettings']);
 });
 
 // ===== Personnel Panel API =====
 Route::prefix('api/panel')->middleware('auth')->group(function () {
-    Route::get('/dashboard-stats', [PersonnelPanelController::class, 'dashboardStats']);
-    Route::get('/my-tasks', [PersonnelPanelController::class, 'myTasks']);
-    Route::get('/task/{id}', [PersonnelPanelController::class, 'taskDetail']);
-    Route::get('/task/{id}/dependency-info', [PersonnelPanelController::class, 'dependencyInfo']);
-    Route::post('/task/{id}/notify-dependency', [PersonnelPanelController::class, 'notifyDependency']);
-    Route::post('/task/{id}/start', [PersonnelPanelController::class, 'startTask']);
-    Route::post('/task-group/start', [PersonnelPanelController::class, 'startTaskGroup']);
-    Route::post('/task/{id}/complete', [PersonnelPanelController::class, 'completeProduction']);
-    Route::get('/available-tasks', [PersonnelPanelController::class, 'availableTasks']);
-    Route::post('/take-task/{id}', [PersonnelPanelController::class, 'takeTask']);
-    Route::get('/completed-tasks', [PersonnelPanelController::class, 'completedTasks']);
-    Route::get('/task-report', [PersonnelPanelController::class, 'taskReport']);
-    Route::get('/assigned-to-me', [PersonnelPanelController::class, 'assignedToMe']);
-    Route::get('/messages/unread-count', [PersonnelPanelController::class, 'unreadMessageCount']);
-    Route::post('/messages/mark-read', [PersonnelPanelController::class, 'markMessagesRead']);
-    Route::get('/messages', [PersonnelPanelController::class, 'messages']);
-    Route::post('/messages', [PersonnelPanelController::class, 'sendMessage']);
-    Route::delete('/messages/{id}', [PersonnelPanelController::class, 'deleteMessage']);
-    Route::delete('/task/{id}', [PersonnelPanelController::class, 'deleteTask']);
+    Route::get('/dashboard-stats', [PanelTaskController::class, 'dashboardStats']);
+    Route::get('/my-tasks', [PanelTaskController::class, 'myTasks']);
+    Route::get('/task/{id}', [PanelTaskController::class, 'taskDetail']);
+    Route::get('/task/{id}/dependency-info', [PanelDependencyController::class, 'dependencyInfo']);
+    Route::post('/task/{id}/notify-dependency', [PanelDependencyController::class, 'notifyDependency']);
+    Route::post('/task/{id}/start', [PanelTaskController::class, 'startTask']);
+    Route::post('/task-group/start', [PanelTaskController::class, 'startTaskGroup']);
+    Route::post('/task/{id}/complete', [PanelTaskController::class, 'completeProduction']);
+    Route::get('/available-tasks', [PanelAvailableTaskController::class, 'availableTasks']);
+    Route::post('/take-task/{id}', [PanelAvailableTaskController::class, 'takeTask']);
+    Route::get('/completed-tasks', [PanelReportController::class, 'completedTasks']);
+    Route::get('/task-report', [PanelReportController::class, 'taskReport']);
+    Route::get('/assigned-to-me', [PanelReportController::class, 'assignedToMe']);
+    Route::get('/messages/unread-count', [PanelMessageController::class, 'unreadMessageCount']);
+    Route::post('/messages/mark-read', [PanelMessageController::class, 'markMessagesRead']);
+    Route::get('/messages', [PanelMessageController::class, 'messages']);
+    Route::post('/messages', [PanelMessageController::class, 'sendMessage']);
+    Route::delete('/messages/{id}', [PanelMessageController::class, 'deleteMessage']);
+    Route::delete('/task/{id}', [PanelTaskController::class, 'deleteTask']);
 });
 
 // ===== Üretim Planlama API =====
