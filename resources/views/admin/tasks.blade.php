@@ -25,6 +25,10 @@
                 <option value="">Personel Seçin...</option>
             </select>
         </div>
+        <div class="col-md-2">
+            <label class="form-label small">Görev Tarihi</label>
+            <input type="date" id="taskDate" class="form-control form-control-sm">
+        </div>
     </div>
 
     <div class="table-responsive" style="border: 1px solid var(--z-border); border-radius: var(--z-radius); overflow:hidden;">
@@ -34,14 +38,15 @@
                     <th>No</th>
                     <th>Ara Ürün</th>
                     <th>Bölüm</th>
-                    <th>Havuzdaki Adet</th>
-                    <th>Toplam Adet</th>
+                    <th>Atanabilir</th>
+                    <th>Üretilecek Net</th>
+                    <th>Boş Stoktan Düşen</th>
                     <th>Atanacak Adet</th>
                     <th>İşlem</th>
                 </tr>
             </thead>
             <tbody id="poolBody">
-                <tr><td colspan="7" class="text-center text-muted py-4">Yükleniyor...</td></tr>
+                <tr><td colspan="8" class="text-center text-muted py-4">Yükleniyor...</td></tr>
             </tbody>
         </table>
     </div>
@@ -51,6 +56,12 @@
 @push('scripts')
 <script>
 const adminTaskCsrf = document.querySelector('meta[name="csrf-token"]').content;
+
+function todayIso() {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 10);
+}
 
 function loadLookups() {
     fetch('/api/stocks/lookups')
@@ -85,23 +96,27 @@ function loadPoolItems() {
             let rows = data.data || [];
             let html = '';
             rows.forEach(s => {
-                html += '<tr>'
-                    + '<td>' + s.id + '</td>'
-                    + '<td>' + (s.component_name || s.product_name || '-') + '</td>'
-                    + '<td>' + (s.department_name || '-') + '</td>'
-                    + '<td><strong>' + (s.adet || 0) + '</strong></td>'
-                    + '<td>' + (s.toplam_adet || 0) + '</td>'
-                    + '<td><input type="number" class="form-control form-control-sm" style="width:80px" value="1" min="1" max="' + (s.adet || 1) + '" id="adet_' + s.id + '"></td>'
-                    + '<td><button class="btn btn-sm btn-success" onclick="assignTask(' + s.id + ')"><i class="bi bi-person-plus"></i> Ata</button></td>'
-                    + '</tr>';
-            });
-            document.getElementById('poolBody').innerHTML = html || '<tr><td colspan="7" class="text-center text-muted py-4">Atanabilecek görev bulunamadı</td></tr>';
+                const maxAssignable = Number(s.toplam_adet || 0);
+	                html += '<tr>'
+	                    + '<td>' + s.id + '</td>'
+	                    + '<td>' + (s.component_name || s.product_name || '-') + '</td>'
+	                    + '<td>' + (s.department_name || '-') + '</td>'
+	                    + '<td><strong>' + (s.adet || 0) + '</strong></td>'
+	                    + '<td>' + (s.toplam_adet || 0) + '</td>'
+	                    + '<td>' + (s.stoktan_ayrilan_adet || 0) + '</td>'
+	                    + '<td><input type="number" class="form-control form-control-sm" style="width:80px" value="' + (maxAssignable > 0 ? 1 : 0) + '" min="1" max="' + maxAssignable + '" id="adet_' + s.id + '"></td>'
+	                    + '<td><button class="btn btn-sm btn-success" onclick="assignTask(' + s.id + ')" ' + (maxAssignable > 0 ? '' : 'disabled') + '><i class="bi bi-person-plus"></i> Ata</button></td>'
+	                    + '</tr>';
+	            });
+	            document.getElementById('poolBody').innerHTML = html || '<tr><td colspan="8" class="text-center text-muted py-4">Atanabilecek görev bulunamadı</td></tr>';
         });
 }
 
 function assignTask(stockNo) {
     let personelId = document.getElementById('taskPersonel').value;
     if (!personelId) { alert('Lütfen personel seçin!'); return; }
+    let gorevTarihi = document.getElementById('taskDate').value;
+    if (!gorevTarihi) { alert('Lütfen görev tarihi seçin!'); return; }
     let adet = document.getElementById('adet_' + stockNo)?.value || 1;
     fetch(`/api/database/pool-tasks/${stockNo}/assign`, {
         method: 'POST',
@@ -110,7 +125,7 @@ function assignTask(stockNo) {
             'X-CSRF-TOKEN': adminTaskCsrf,
             'Accept': 'application/json'
         },
-        body: JSON.stringify({ personel_no: parseInt(personelId), adet: parseInt(adet) })
+        body: JSON.stringify({ personel_no: parseInt(personelId), adet: parseInt(adet), gorev_tarihi: gorevTarihi })
     })
         .then(r => r.json())
         .then(data => {
@@ -120,6 +135,9 @@ function assignTask(stockNo) {
         .catch(() => alert('Görev atama işlemi başarısız oldu.'));
 }
 
+const taskDate = document.getElementById('taskDate');
+taskDate.min = todayIso();
+taskDate.value = todayIso();
 loadLookups();
 loadPoolItems();
 </script>

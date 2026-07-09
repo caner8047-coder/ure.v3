@@ -251,8 +251,9 @@ class WorkOrderCenterTest extends TestCase
         ]);
 
         $bomService = Mockery::mock(BomService::class);
-        $bomService->shouldReceive('traceContextFromRecord')->once()->andReturn([]);
+        $bomService->shouldReceive('traceContextFromRecord')->twice()->andReturn([]);
         $bomService->shouldReceive('scopeQueryToTrace')->once()->andReturnUsing(fn ($query) => $query);
+        $bomService->shouldReceive('hasOpenDescendantWork')->once()->with('8', [])->andReturnFalse();
         $bomService->shouldReceive('personelGorevTabloGuncelle')->once()->with('8');
         $this->app->instance(BomService::class, $bomService);
 
@@ -581,6 +582,328 @@ class WorkOrderCenterTest extends TestCase
             ->assertJsonFragment(['message' => 'Is emri uzerinde bolum bilgisi eksik gorunuyor.'])
             ->assertJsonFragment(['message' => 'Is emri toplam adedi sifir veya negatif gorunuyor.'])
             ->assertJsonFragment(['message' => 'Bu is emri icin merkezde olay kaydi bulunamadi.']);
+    }
+
+    public function test_order_snapshot_treats_ready_personnel_task_with_missing_child_stock_as_waiting(): void
+    {
+        $this->createWorkOrderCenterTables();
+        $this->createLegacyOrdersTable();
+        $this->createLegacyProductsTable();
+        $this->createLegacyComponentsTable();
+        $this->createLegacyStocksTable();
+        $this->createLegacyPoolTable();
+        $this->createLegacyPersonnelTasksTable();
+        $this->createLegacyWorkOrdersTable();
+        $this->createLegacyDepartmentsTable();
+        $this->createLegacyPersonnelTable();
+        $this->createStockMovementsTable();
+
+        DB::table('tbBolum')->insert([
+            ['No' => 1, 'BolumAdi' => 'Kesimhane'],
+            ['No' => 5, 'BolumAdi' => 'Döşemehane'],
+        ]);
+        DB::table('tbPersonel')->insert(['PersonelNo' => 2070, 'Ad' => 'Ali', 'Soyad' => 'Akyürek', 'BolumAdiNo' => 5]);
+        DB::table('tbAraUrun')->insert([
+            ['No' => 6486, 'AraUrunAdi' => 'KES/orta sehpa zem benetta wolf 01 beyaz', 'BolumAdiNo' => 1, 'Yol' => ''],
+            ['No' => 6487, 'AraUrunAdi' => 'DÖŞ/orta sehpa zem benetta wolf 01 beyaz', 'BolumAdiNo' => 5, 'Yol' => '6486-1'],
+        ]);
+        DB::table('tbBolumAraStok')->insert([
+            'BolumAdiNo' => 1,
+            'AraUrunAdiNo' => 6486,
+            'Adet' => 20,
+            'TamponMiktar' => 20,
+        ]);
+        DB::table('tbSiparisSatir')->insert([
+            'No' => 681,
+            'SiparisNo' => 'STOK-20260612-1631',
+            'UrunAdi' => 'orta sehpa zem benetta wolf 01 beyaz',
+            'Adet' => 24,
+            'Durum' => 'IsEmriVerildi',
+            'Aktif' => 1,
+            'GorevNo' => 417,
+            'TamponDusumleri' => json_encode([['araNo' => 6486, 'adet' => 4]]),
+        ]);
+        DB::table('tbGorevler')->insert([
+            'No' => 417,
+            'SiparisSatirNo' => 681,
+            'SiparisNo' => 'STOK-20260612-1631',
+            'ToplamAdet' => 24,
+            'BolumAdiNo' => 5,
+            'PersonelNo' => null,
+            'AraUrunAdiNo' => 6487,
+        ]);
+        DB::table('tbPersonelGorev')->insert([
+            'No' => 569,
+            'SiparisSatirNo' => 681,
+            'SiparisNo' => 'STOK-20260612-1631',
+            'BolumAdiNo' => 5,
+            'PersonelNo' => 2070,
+            'AraUrunAdiNo' => 6487,
+            'Adet' => 24,
+            'BekleyenAdet' => 0,
+            'Onay' => 'hazir',
+            'GorevBaslamaTarihi' => '18/06/2026 15:07',
+        ]);
+        DB::table('work_order_events')->insert([
+            'id' => 6810,
+            'event_uuid' => '00000000-0000-0000-0000-000000006810',
+            'correlation_id' => '10000000-0000-0000-0000-000000006810',
+            'aggregate_type' => 'order_item',
+            'aggregate_id' => 681,
+            'order_item_no' => 681,
+            'order_no' => 'STOK-20260612-1631',
+            'work_order_no' => 417,
+            'event_type' => 'work_order_created_single',
+            'event_group' => 'create',
+            'source_screen' => 'Sipariş Yönetimi',
+            'source_action' => 'İş Emri Ver',
+            'actor_type' => 'admin',
+            'actor_name' => 'Cuma Yıldırım',
+            'status_before' => 'UretimBekliyor',
+            'status_after' => 'IsEmriVerildi',
+            'title_human' => 'Siparise is emri verildi',
+            'summary_human' => 'Siparise is emri verildi.',
+            'happened_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        app(\App\Services\WorkOrderSnapshotProjector::class)->projectOrderItem(681);
+
+        $this->assertDatabaseHas('work_order_snapshots', [
+            'aggregate_type' => 'order_item',
+            'aggregate_id' => 681,
+            'current_stage' => 'assigned_waiting',
+            'alert_count' => 1,
+        ]);
+
+        $snapshot = DB::table('work_order_snapshots')->where('aggregate_id', 681)->value('snapshot');
+        $snapshot = json_decode($snapshot, true);
+        $this->assertSame(0, $snapshot['counts']['ready_tasks']);
+        $this->assertSame(1, $snapshot['counts']['assigned_waiting_tasks']);
+        $this->assertSame(1, $snapshot['counts']['blocked_ready_tasks']);
+        $this->assertSame('ready_task_has_missing_child_stock', $snapshot['alerts'][0]['code']);
+
+        $this->actingAs($this->makeAdminUser())
+            ->getJson('/api/work-order-center/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.current_stage', 'assigned_waiting')
+            ->assertJsonPath('data.0.task_summary.ready', 0)
+            ->assertJsonPath('data.0.task_summary.waiting', 1)
+            ->assertJsonFragment(['status_label' => 'Alt parça bekliyor'])
+            ->assertJsonFragment(['wait_reason' => 'KES/orta sehpa zem benetta wolf 01 beyaz için yeterli alt parça stoğu yok.']);
+    }
+
+    public function test_bom_rebalance_does_not_reset_buffer_for_active_order_reservation(): void
+    {
+        $this->createLegacyOrdersTable();
+        $this->createLegacyComponentsTable();
+        $this->createLegacyStocksTable();
+
+        DB::table('tbAraUrun')->insert([
+            'No' => 6486,
+            'AraUrunAdi' => 'KES/orta sehpa zem benetta wolf 01 beyaz',
+            'BolumAdiNo' => 1,
+            'Yol' => '',
+        ]);
+        DB::table('tbBolumAraStok')->insert([
+            'BolumAdiNo' => 1,
+            'AraUrunAdiNo' => 6486,
+            'Adet' => 7,
+            'TamponMiktar' => 0,
+        ]);
+        DB::table('tbSiparisSatir')->insert([
+            'No' => 681,
+            'SiparisNo' => 'STOK-20260612-1631',
+            'UrunAdi' => 'orta sehpa zem benetta wolf 01 beyaz',
+            'Adet' => 24,
+            'Durum' => 'IsEmriVerildi',
+            'Aktif' => 1,
+            'TamponDusumleri' => json_encode([['araNo' => 6486, 'adet' => 4]]),
+        ]);
+
+        app(BomService::class)->personelGorevTabloGuncelle('6486');
+
+        $this->assertSame(0, intval(DB::table('tbBolumAraStok')->where('AraUrunAdiNo', 6486)->value('TamponMiktar')));
+
+        DB::table('tbSiparisSatir')->where('No', 681)->update(['Durum' => 'StokKarsilandi']);
+
+        app(BomService::class)->personelGorevTabloGuncelle('6486');
+
+        $this->assertSame(7, intval(DB::table('tbBolumAraStok')->where('AraUrunAdiNo', 6486)->value('TamponMiktar')));
+    }
+
+    public function test_order_feed_groups_status_tasks_and_timeline_by_order(): void
+    {
+        $this->createWorkOrderCenterTables();
+        $this->createLegacyOrdersTable();
+        $this->createLegacyPoolTable();
+        $this->createLegacyPersonnelTasksTable();
+        $this->createLegacyWorkOrdersTable();
+        $this->createLegacyDepartmentsTable();
+        $this->createLegacyPersonnelTable();
+
+        DB::table('tbBolum')->insert(['No' => 3, 'BolumAdi' => 'Dikim']);
+        DB::table('tbPersonel')->insert(['PersonelNo' => 5, 'Ad' => 'Cuma', 'Soyad' => 'Yildirim', 'BolumAdiNo' => 3]);
+
+        DB::table('tbSiparisSatir')->insert([
+            'No' => 77,
+            'SiparisNo' => 'S-ORDER-77',
+            'Musteri' => 'Test Musteri',
+            'UrunAdi' => 'Puf Zem',
+            'Adet' => 4,
+            'Durum' => 'IsEmriVerildi',
+            'Aktif' => 1,
+            'GorevNo' => 701,
+        ]);
+
+        DB::table('tbGorevler')->insert([
+            [
+                'No' => 701,
+                'SiparisSatirNo' => 77,
+                'SiparisNo' => 'S-ORDER-77',
+                'ToplamAdet' => 4,
+                'BolumAdiNo' => 3,
+                'PersonelNo' => null,
+                'GorevBaslamaTarihi' => '01/05/2026 09:00',
+                'GorevBitisTarihi' => null,
+            ],
+            [
+                'No' => 702,
+                'SiparisSatirNo' => 77,
+                'SiparisNo' => 'S-ORDER-77',
+                'ToplamAdet' => 2,
+                'BolumAdiNo' => 3,
+                'PersonelNo' => 5,
+                'GorevBaslamaTarihi' => '01/05/2026 10:00',
+                'GorevBitisTarihi' => '01/05/2026 11:00',
+            ],
+        ]);
+
+        DB::table('tbBolumHavuz')->insert([
+            'No' => 21,
+            'SiparisSatirNo' => 77,
+            'SiparisNo' => 'S-ORDER-77',
+            'BolumAdiNo' => 3,
+            'Adet' => 2,
+            'ToplamAdet' => 4,
+            'GorevBaslangicTarihi' => '01/05/2026',
+            'GorevBaslangicSaati' => '09:30',
+        ]);
+
+        DB::table('tbPersonelGorev')->insert([
+            'No' => 31,
+            'SiparisSatirNo' => 77,
+            'SiparisNo' => 'S-ORDER-77',
+            'BolumAdiNo' => 3,
+            'PersonelNo' => 5,
+            'Adet' => 4,
+            'BekleyenAdet' => 2,
+            'Onay' => 'false',
+            'GorevBaslamaTarihi' => '01/05/2026 10:00',
+        ]);
+
+        DB::table('work_order_events')->insert([
+            [
+                'id' => 81,
+                'event_uuid' => '00000000-0000-0000-0000-000000000081',
+                'correlation_id' => '10000000-0000-0000-0000-000000000081',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => 77,
+                'order_item_no' => 77,
+                'order_no' => 'S-ORDER-77',
+                'work_order_no' => 701,
+                'pool_no' => null,
+                'personnel_task_no' => null,
+                'event_type' => 'work_order_created_single',
+                'event_group' => 'create',
+                'title_human' => 'Siparise is emri verildi',
+                'summary_human' => 'Siparise is emri verildi.',
+                'actor_type' => 'admin',
+                'actor_name' => 'Admin User',
+                'status_before' => 'UretimBekliyor',
+                'status_after' => 'IsEmriVerildi',
+                'happened_at' => now()->subMinutes(3),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 82,
+                'event_uuid' => '00000000-0000-0000-0000-000000000082',
+                'correlation_id' => '10000000-0000-0000-0000-000000000082',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => 77,
+                'order_item_no' => 77,
+                'order_no' => 'S-ORDER-77',
+                'work_order_no' => 701,
+                'pool_no' => 21,
+                'personnel_task_no' => 31,
+                'event_type' => 'task_assigned_by_admin',
+                'event_group' => 'production',
+                'title_human' => 'Yonetici personele gorev atadi',
+                'summary_human' => 'Cuma Yildirim gorevlendirildi.',
+                'actor_type' => 'admin',
+                'actor_name' => 'Admin User',
+                'status_before' => 'IsEmriVerildi',
+                'status_after' => 'IsEmriVerildi',
+                'happened_at' => now()->subMinutes(2),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 83,
+                'event_uuid' => '00000000-0000-0000-0000-000000000083',
+                'correlation_id' => '10000000-0000-0000-0000-000000000083',
+                'aggregate_type' => 'order_item',
+                'aggregate_id' => 77,
+                'order_item_no' => 77,
+                'order_no' => 'S-ORDER-77',
+                'work_order_no' => 701,
+                'pool_no' => null,
+                'personnel_task_no' => 31,
+                'event_type' => 'production_completed_full',
+                'event_group' => 'production',
+                'title_human' => 'Uretim tamamlandi',
+                'summary_human' => 'Uretim girisi yapildi.',
+                'actor_type' => 'personnel',
+                'actor_name' => 'Cuma Yildirim',
+                'status_before' => 'IsEmriVerildi',
+                'status_after' => 'IsEmriVerildi',
+                'happened_at' => now()->subMinute(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        DB::table('work_order_snapshots')->insert([
+            'aggregate_type' => 'order_item',
+            'aggregate_id' => 77,
+            'order_item_no' => 77,
+            'order_no' => 'S-ORDER-77',
+            'work_order_no' => 701,
+            'current_status' => 'IsEmriVerildi',
+            'current_stage' => 'in_production',
+            'current_holder_name' => 'Cuma Yildirim',
+            'next_expected_action' => 'Uretim girisi ve tamamlanma takibi yapilmali.',
+            'last_event_id' => 83,
+            'last_changed_at' => now(),
+            'alert_count' => 0,
+            'snapshot' => json_encode(['counts' => ['pool' => 1, 'active_tasks' => 1, 'completed_tasks' => 1], 'alerts' => []]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->makeAdminUser())
+            ->getJson('/api/work-order-center/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.order_no', 'S-ORDER-77')
+            ->assertJsonPath('data.0.work_order_no', 701)
+            ->assertJsonPath('data.0.task_summary.pool', 1)
+            ->assertJsonPath('data.0.task_summary.active', 1)
+            ->assertJsonPath('data.0.task_summary.completed', 1)
+            ->assertJsonPath('data.0.timeline.0.event_type', 'work_order_created_single')
+            ->assertJsonFragment(['title' => 'Personel görevi #31'])
+            ->assertJsonFragment(['title' => 'Tamamlanan görev #702']);
     }
 
     private function makeAdminUser(): User

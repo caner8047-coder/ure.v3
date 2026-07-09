@@ -14,7 +14,8 @@ class WorkOrderSnapshotProjector
     private ?bool $hasTraceColumns = null;
 
     public function __construct(
-        protected WorkOrderAnomalyDetector $anomalyDetector
+        protected WorkOrderAnomalyDetector $anomalyDetector,
+        protected BomService $bomService
     ) {}
 
     public function projectFromEvent(WorkOrderEvent $event): ?WorkOrderSnapshot
@@ -45,10 +46,14 @@ class WorkOrderSnapshotProjector
             return null;
         }
 
-        [$poolRows, $activeTaskRows, $completedTaskRows] = $this->loadOrderProductionRows($order);
-        [$holderType, $holderId, $holderName] = $this->resolveHolder($order, $poolRows, $activeTaskRows);
-        [$currentStage, $nextExpectedAction] = $this->resolveStageAndNextAction($order, $poolRows, $activeTaskRows);
-        $alerts = $this->anomalyDetector->detectOrderItemAlerts($order, $poolRows, $activeTaskRows, $completedTaskRows);
+        [$poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows, $completedTaskRows, $blockedReadyTaskRows] = $this->loadOrderProductionRows($order);
+        [$holderType, $holderId, $holderName] = $this->resolveHolder($order, $poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows);
+        [$currentStage, $nextExpectedAction] = $this->resolveStageAndNextAction($order, $poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows);
+        $openTaskRowsForAlerts = $activeTaskRows
+            ->concat($readyTaskRows)
+            ->concat($assignedWaitingTaskRows);
+        $alerts = $this->anomalyDetector->detectOrderItemAlerts($order, $poolRows, $openTaskRowsForAlerts, $completedTaskRows);
+        $alerts = array_merge($alerts, $this->blockedReadyTaskAlerts($blockedReadyTaskRows));
 
         $snapshotPayload = [
             'order_item_no' => $orderItemNo,
@@ -60,6 +65,9 @@ class WorkOrderSnapshotProjector
             'counts' => [
                 'pool' => $poolRows->count(),
                 'active_tasks' => $activeTaskRows->count(),
+                'ready_tasks' => $readyTaskRows->count(),
+                'assigned_waiting_tasks' => $assignedWaitingTaskRows->count(),
+                'blocked_ready_tasks' => $blockedReadyTaskRows->count(),
                 'completed_tasks' => $completedTaskRows->count(),
             ],
             'holder' => [
@@ -154,30 +162,31 @@ class WorkOrderSnapshotProjector
                 ->where('h.SiparisSatirNo', $orderItemNo)
                 ->get();
 
-            $activeTaskRows = DB::table('tbPersonelGorev as pg')
+            $taskBaseQuery = DB::table('tbPersonelGorev as pg')
                 ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
                 ->select('pg.*', DB::raw("TRIM(CONCAT(IFNULL(p.Ad, ''), ' ', IFNULL(p.Soyad, ''))) as personel_adi"))
-                ->where('pg.SiparisSatirNo', $orderItemNo)
-                ->where(function ($query) {
-                    $query->where('pg.BekleyenAdet', '>', 0)
-                        ->orWhereNull('pg.Onay')
-                        ->orWhere('pg.Onay', 0)
-                        ->orWhere('pg.Onay', '0')
-                        ->orWhereRaw("LOWER(TRIM(CAST(pg.Onay AS CHAR))) = 'false'");
-                })
+                ->where('pg.SiparisSatirNo', $orderItemNo);
+
+            $activeTaskRows = $this->applyActiveTaskFilter(clone $taskBaseQuery)
                 ->get();
 
-            $completedTaskRows = DB::table('tbPersonelGorev')
+            [$readyTaskRows, $blockedReadyTaskRows] = $this->partitionReadyTaskRowsByAvailability(
+                $this->applyReadyTaskFilter(clone $taskBaseQuery)->get()
+            );
+
+            $assignedWaitingTaskRows = $this->applyAssignedWaitingTaskFilter(clone $taskBaseQuery)
+                ->get()
+                ->concat($blockedReadyTaskRows)
+                ->values();
+
+            $completedTaskRows = DB::table('tbGorevler')
                 ->where('SiparisSatirNo', $orderItemNo)
-                ->where(function ($query) {
-                    $query->where('BekleyenAdet', '<=', 0)
-                        ->orWhere('Onay', 1)
-                        ->orWhere('Onay', '1')
-                        ->orWhereRaw("LOWER(TRIM(CAST(Onay AS CHAR))) = 'true'");
-                })
+                ->where('ToplamAdet', '>', 0)
+                ->whereNotNull('PersonelNo')
+                ->where('PersonelNo', '>', 0)
                 ->get();
 
-            return [$poolRows, $activeTaskRows, $completedTaskRows];
+            return [$poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows, $completedTaskRows, $blockedReadyTaskRows];
         }
 
         $poolQuery = DB::table('tbBolumHavuz as h')
@@ -199,29 +208,39 @@ class WorkOrderSnapshotProjector
             $taskQuery->whereRaw('1 = 0');
         }
 
-        $activeTaskRows = (clone $taskQuery)
-            ->where(function ($query) {
-                $query->where('pg.BekleyenAdet', '>', 0)
-                    ->orWhereNull('pg.Onay')
-                    ->orWhere('pg.Onay', 0)
-                    ->orWhere('pg.Onay', '0')
-                    ->orWhereRaw("LOWER(TRIM(CAST(pg.Onay AS CHAR))) = 'false'");
-            })
+        $activeTaskRows = $this->applyActiveTaskFilter(clone $taskQuery)
             ->get();
 
-        $completedTaskRows = (clone $taskQuery)
-            ->where(function ($query) {
-                $query->where('pg.BekleyenAdet', '<=', 0)
-                    ->orWhere('pg.Onay', 1)
-                    ->orWhere('pg.Onay', '1')
-                    ->orWhereRaw("LOWER(TRIM(CAST(pg.Onay AS CHAR))) = 'true'");
-            })
-            ->get();
+        [$readyTaskRows, $blockedReadyTaskRows] = $this->partitionReadyTaskRowsByAvailability(
+            $this->applyReadyTaskFilter(clone $taskQuery)->get()
+        );
 
-        return [$poolQuery->get(), $activeTaskRows, $completedTaskRows];
+        $assignedWaitingTaskRows = $this->applyAssignedWaitingTaskFilter(clone $taskQuery)
+            ->get()
+            ->concat($blockedReadyTaskRows)
+            ->values();
+
+        $completedTaskRows = Schema::hasTable('tbGorevler')
+            ? DB::table('tbGorevler')
+                ->where('ToplamAdet', '>', 0)
+                ->whereNotNull('PersonelNo')
+                ->where('PersonelNo', '>', 0)
+                ->when($matchedProductType === 'Nihai' && $matchedProductNo > 0, function ($query) use ($matchedProductNo) {
+                    $query->where('UrunIDNo', $matchedProductNo);
+                })
+                ->when($matchedProductType === 'Ara' && $matchedProductNo > 0, function ($query) use ($matchedProductNo) {
+                    $query->where('AraUrunAdiNo', $matchedProductNo);
+                })
+                ->when(!in_array($matchedProductType, ['Nihai', 'Ara'], true) || $matchedProductNo <= 0, function ($query) {
+                    $query->whereRaw('1 = 0');
+                })
+                ->get()
+            : collect();
+
+        return [$poolQuery->get(), $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows, $completedTaskRows, $blockedReadyTaskRows];
     }
 
-    private function resolveHolder(object $order, $poolRows, $activeTaskRows): array
+    private function resolveHolder(object $order, $poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows): array
     {
         if (intval($order->BagliOlduguOzelUretimNo ?? 0) > 0) {
             $specialNo = intval($order->BagliOlduguOzelUretimNo);
@@ -236,6 +255,22 @@ class WorkOrderSnapshotProjector
             $personelNo = intval($task->PersonelNo ?? 0);
 
             return ['personnel', $personelNo > 0 ? (string) $personelNo : null, $personelAdi !== '' ? $personelAdi : 'Personel gorevi'];
+        }
+
+        if ($readyTaskRows->isNotEmpty()) {
+            $task = $readyTaskRows->first();
+            $personelAdi = trim((string) ($task->personel_adi ?? ''));
+            $personelNo = intval($task->PersonelNo ?? 0);
+
+            return ['personnel', $personelNo > 0 ? (string) $personelNo : null, $personelAdi !== '' ? $personelAdi : 'Uretime hazir personel gorevi'];
+        }
+
+        if ($assignedWaitingTaskRows->isNotEmpty()) {
+            $task = $assignedWaitingTaskRows->first();
+            $personelAdi = trim((string) ($task->personel_adi ?? ''));
+            $personelNo = intval($task->PersonelNo ?? 0);
+
+            return ['personnel', $personelNo > 0 ? (string) $personelNo : null, $personelAdi !== '' ? $personelAdi : 'Bekleyen personel gorevi'];
         }
 
         if ($poolRows->isNotEmpty()) {
@@ -258,7 +293,7 @@ class WorkOrderSnapshotProjector
         return [null, null, null];
     }
 
-    private function resolveStageAndNextAction(object $order, $poolRows, $activeTaskRows): array
+    private function resolveStageAndNextAction(object $order, $poolRows, $activeTaskRows, $readyTaskRows, $assignedWaitingTaskRows): array
     {
         $status = (string) ($order->Durum ?? '');
         $stockAvailable = $this->resolveAvailableStockForOrder($order);
@@ -270,10 +305,14 @@ class WorkOrderSnapshotProjector
             $status === 'StokKarsilandi' => 'fulfilled_from_stock',
             intval($order->BagliOlduguOzelUretimNo ?? 0) > 0 && $status === 'UretimdenKarsilaniyor' => 'linked_to_special_production',
             $activeTaskRows->isNotEmpty() => 'in_production',
+            $readyTaskRows->isNotEmpty() => 'ready_for_production',
+            $assignedWaitingTaskRows->isNotEmpty() => 'assigned_waiting',
             $poolRows->isNotEmpty() => 'in_pool',
             $status === 'IsEmriVerildi' => 'issued',
             default => 'waiting',
         };
+
+        $availabilityIssue = $this->firstAvailabilityIssue($assignedWaitingTaskRows);
 
         $nextAction = match ($stage) {
             'waiting' => $stockAvailable >= intval($order->Adet ?? 0)
@@ -284,6 +323,8 @@ class WorkOrderSnapshotProjector
             'issued' => 'Havuz veya personel gorevi takibi yapilmali.',
             'in_pool' => 'Personele gorev aktarimi veya personelin gorevi almasi bekleniyor.',
             'in_production' => 'Uretim girisi ve tamamlanma takibi yapilmali.',
+            'ready_for_production' => 'Personelin gorevi uretime almasi bekleniyor.',
+            'assigned_waiting' => $availabilityIssue ?: 'Atanmis gorev parca veya stok hazirligini bekliyor.',
             'linked_to_special_production' => 'Bagli ozel uretimin sonucu bekleniyor.',
             'fulfilled_from_stock' => 'Kayit stoktan kapanmis durumda; sevk veya son kontrol yapilabilir.',
             'cancelled_but_processing_tail' => 'Iptal edilmis ama sistemde kalan uretim kuyrugu kontrol edilmeli.',
@@ -292,6 +333,57 @@ class WorkOrderSnapshotProjector
         };
 
         return [$stage, $nextAction];
+    }
+
+    private function partitionReadyTaskRowsByAvailability($readyTaskRows): array
+    {
+        $ready = collect();
+        $blocked = collect();
+
+        foreach ($readyTaskRows as $row) {
+            $issue = $this->bomService->taskReadinessIssue($row);
+            if ($issue !== null) {
+                $row->availability_issue = $issue;
+                $row->readiness_blocked = 1;
+                $blocked->push($row);
+                continue;
+            }
+
+            $ready->push($row);
+        }
+
+        return [$ready->values(), $blocked->values()];
+    }
+
+    private function firstAvailabilityIssue($rows): ?string
+    {
+        foreach ($rows as $row) {
+            $issue = trim((string) ($row->availability_issue ?? ''));
+            if ($issue !== '') {
+                return $issue;
+            }
+        }
+
+        return null;
+    }
+
+    private function blockedReadyTaskAlerts($rows): array
+    {
+        return collect($rows)
+            ->map(function ($row) {
+                $issue = trim((string) ($row->availability_issue ?? 'Alt parça stoğu yetersiz.'));
+
+                return [
+                    'code' => 'ready_task_has_missing_child_stock',
+                    'severity' => 'high',
+                    'message' => 'Personelde hazır görünen görev alt parça kontrolünden geçemiyor: ' . $issue,
+                    'suggested_fix' => 'Eksik alt parçayı üretin/stoklayın veya görevin hazır-bekleyen adetlerini yeniden senkronlayın.',
+                    'personnel_task_no' => intval($row->No ?? 0),
+                    'component_no' => intval($row->AraUrunAdiNo ?? 0),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     private function resolveAvailableStockForOrder(object $order): int
@@ -367,10 +459,63 @@ class WorkOrderSnapshotProjector
             $this->hasTraceColumns =
                 Schema::hasTable('tbBolumHavuz') &&
                 Schema::hasTable('tbPersonelGorev') &&
+                Schema::hasTable('tbGorevler') &&
                 Schema::hasColumn('tbBolumHavuz', 'SiparisSatirNo') &&
-                Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo');
+                Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo') &&
+                Schema::hasColumn('tbGorevler', 'SiparisSatirNo');
         }
 
         return $this->hasTraceColumns;
+    }
+
+    private function openApprovalSql(string $column = 'Onay'): string
+    {
+        $normalized = "LOWER(TRIM(CAST({$column} AS CHAR)))";
+
+        return "({$column} IS NULL OR TRIM(CAST({$column} AS CHAR)) = '' OR {$normalized} NOT IN ('1', 'true', 'evet', 'yes'))";
+    }
+
+    private function productionReadyApprovalSql(string $column = 'Onay'): string
+    {
+        $normalized = "LOWER(TRIM(CAST({$column} AS CHAR)))";
+
+        return "({$normalized} IN ('hazir', 'ready'))";
+    }
+
+    private function activeProductionApprovalSql(string $column = 'Onay'): string
+    {
+        $normalized = "LOWER(TRIM(CAST({$column} AS CHAR)))";
+
+        return "({$normalized} IN ('0', 'false', 'hayir', 'hayır', 'no'))";
+    }
+
+    private function applyActiveTaskFilter($query)
+    {
+        return $query->where(function ($outerQuery) {
+            $outerQuery->where(function ($query) {
+                $query->where('pg.Adet', '>', 0)
+                    ->whereRaw($this->openApprovalSql('pg.Onay'))
+                    ->whereRaw('NOT ' . $this->productionReadyApprovalSql('pg.Onay'));
+            })->orWhere(function ($query) {
+                $query->where('pg.BekleyenAdet', '>', 0)
+                    ->whereRaw($this->activeProductionApprovalSql('pg.Onay'));
+            });
+        });
+    }
+
+    private function applyReadyTaskFilter($query)
+    {
+        return $query->where(function ($outerQuery) {
+            $outerQuery->where('pg.Adet', '>', 0)
+                ->orWhere('pg.BekleyenAdet', '>', 0);
+        })->whereRaw($this->productionReadyApprovalSql('pg.Onay'));
+    }
+
+    private function applyAssignedWaitingTaskFilter($query)
+    {
+        return $query->where('pg.BekleyenAdet', '>', 0)
+            ->whereRaw($this->openApprovalSql('pg.Onay'))
+            ->whereRaw('NOT ' . $this->activeProductionApprovalSql('pg.Onay'))
+            ->whereRaw('NOT ' . $this->productionReadyApprovalSql('pg.Onay'));
     }
 }

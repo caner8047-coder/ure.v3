@@ -332,7 +332,7 @@ function loadProducts() {
 
         var options = '<option value="">Urun Secin...</option>';
         products.forEach(function (product) {
-            var label = product.sistemAdi || product.urunID || ('Urun #' + product.no);
+            var label = productDisplayName(product);
             options += '<option value="Nihai_' + product.no + '">' + escapeHtml(label) + '</option>';
         });
         $('#addProductSelect').html(options);
@@ -340,7 +340,7 @@ function loadProducts() {
 
         var setOptions = '<option value="">Bilesen urunu secin...</option>';
         products.forEach(function (product) {
-            var label = product.sistemAdi || product.urunID || ('Urun #' + product.no);
+            var label = productDisplayName(product);
             setOptions += '<option value="' + product.no + '" data-label="' + escapeHtml(label) + '">' + escapeHtml(label) + '</option>';
         });
         $('#setBilesenSelect').html(setOptions);
@@ -361,6 +361,11 @@ function initSelect2(selector, placeholder) {
         allowClear: true,
         width: '100%'
     });
+}
+
+function productDisplayName(product) {
+    var label = product.displayName || product.sistemAdi || product.urunId || product.urunID || product.UrunID || product.name;
+    return String(label || ('Urun #' + product.no)).trim();
 }
 
 function loadCache() {

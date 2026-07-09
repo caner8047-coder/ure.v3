@@ -24,6 +24,13 @@ class ProductionPlanningController extends Controller
         return in_array($normalized, ['1', 'true', 'evet', 'yes'], true);
     }
 
+    private function isActiveProductionValue(mixed $value): bool
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['0', 'false', 'hayir', 'hayır', 'no'], true);
+    }
+
     private function serializeRecord(object|array|null $record): ?array
     {
         if ($record === null) {
@@ -88,12 +95,16 @@ class ProductionPlanningController extends Controller
 
         try {
             $bomService = app(BomService::class);
+            // Sadece henüz üretime başlamamış görevleri güncelle;
+            // aktif üretimde (Onay='false') veya tamamlanmış (Onay='true') görevlerin
+            // adetlerine dokunma.
             $tasks = DB::table('tbPersonelGorev')
                 ->where('PersonelNo', $personelNo)
                 ->where(function ($query) {
                     $query->where('Adet', '>', 0)
                         ->orWhere('BekleyenAdet', '>', 0);
                 })
+                ->whereRaw($this->pendingApprovalSql('Onay'))
                 ->limit(300)
                 ->get();
 
@@ -114,10 +125,15 @@ class ProductionPlanningController extends Controller
         }
     }
 
-    private function logPlanningEvent(string $eventType, object $task, ?object $afterTask = null, array $attributes = []): void
+    private function logPlanningEvent(string $eventType, ?object $task, ?object $afterTask = null, array $attributes = []): void
     {
+        $eventTask = $task ?? $afterTask;
+        if (!$eventTask) {
+            return;
+        }
+
         app(\App\Services\WorkOrderEventLogger::class)->log(array_merge(
-            $this->buildTaskEventBase($task),
+            $this->buildTaskEventBase($eventTask),
             [
                 'event_type' => $eventType,
                 'payload_before' => $this->serializeRecord($task),
@@ -252,6 +268,39 @@ class ProductionPlanningController extends Controller
         };
     }
 
+    private function enrichPlanningTaskAvailability($tasks)
+    {
+        $bomService = app(BomService::class);
+
+        return collect($tasks)->map(function ($task) use ($bomService) {
+            $ready = max(0, intval($task->Adet ?? 0));
+            $waiting = max(0, intval($task->BekleyenAdet ?? 0));
+            $active = $this->isActiveProductionValue($task->Onay ?? '');
+            $issue = $active ? null : $this->readinessIssueForTask($task, $bomService);
+
+            $task->HasShortage = $issue !== null ? 1 : 0;
+            $task->BeklemeNedeni = $issue ?? '';
+            $task->ButonMetni = $issue !== null
+                ? (str_contains($issue, 'alt parça') ? 'Alt parça stoğu yetersiz' : $issue)
+                : '';
+            $task->Baslatilabilir = (!$active && $issue === null && $ready > 0) ? 1 : 0;
+
+            if ($active) {
+                $task->Durum = 'Üretimde';
+            } elseif ($issue !== null) {
+                $task->Durum = 'Alt parça bekliyor';
+            } elseif ($ready > 0) {
+                $task->Durum = $waiting > 0 ? 'Kısmi kabul edilebilir' : 'Kabul edilebilir';
+            } elseif ($waiting > 0) {
+                $task->Durum = 'Alt parça bekliyor';
+            } else {
+                $task->Durum = 'Plan bekliyor';
+            }
+
+            return $task;
+        })->values();
+    }
+
     private function dependencyShortagesForTask(object $task, BomService $bomService): array
     {
         $quantityToCheck = $this->taskQuantityToCheck($task);
@@ -303,6 +352,7 @@ class ProductionPlanningController extends Controller
                 'usable_quantity' => $usableQuantity,
                 'missing_quantity' => $missingQuantity,
                 'suppliers' => $this->dependencySuppliersForComponent($task, $componentNo, $missingQuantity, $traceContext, $bomService),
+                'related_suppliers' => $this->dependencyRelatedSuppliersForComponent($task, $componentNo, $missingQuantity, $traceContext, $bomService),
                 'pool' => $this->dependencyPoolRowsForComponent($componentNo, $traceContext, $bomService),
             ];
         }
@@ -385,6 +435,102 @@ class ProductionPlanningController extends Controller
         })->values()->all();
     }
 
+    private function dependencyRelatedSuppliersForComponent(
+        object $waitingTask,
+        int $componentNo,
+        int $missingQuantity,
+        array $traceContext,
+        BomService $bomService
+    ): array {
+        if ($componentNo <= 0 || !Schema::hasTable('tbPersonelGorev')) {
+            return [];
+        }
+
+        $query = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->where('pg.AraUrunAdiNo', $componentNo)
+            ->where('pg.No', '!=', intval($waitingTask->No ?? 0))
+            ->where(function ($query) {
+                $query->where('pg.Adet', '>', 0)
+                    ->orWhere('pg.BekleyenAdet', '>', 0);
+            })
+            ->orderByRaw('CASE WHEN COALESCE(pg.Adet, 0) > 0 THEN 0 ELSE 1 END')
+            ->orderBy('pg.GorevBaslamaTarihi')
+            ->orderBy('pg.No');
+
+        $trace = $bomService->normalizeTraceContext($traceContext);
+        if ($trace['siparisSatirNo'] > 0 && Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo')) {
+            $query->where(function ($query) use ($trace) {
+                $query->whereNull('pg.SiparisSatirNo')
+                    ->orWhere('pg.SiparisSatirNo', '<>', $trace['siparisSatirNo']);
+            });
+        } elseif ($trace['siparisNo'] !== '' && Schema::hasColumn('tbPersonelGorev', 'SiparisNo')) {
+            $query->where(function ($query) use ($trace) {
+                $query->whereNull('pg.SiparisNo')
+                    ->orWhere('pg.SiparisNo', '<>', $trace['siparisNo']);
+            });
+        }
+
+        $supplierColumns = [
+            'pg.No',
+            'pg.PersonelNo',
+            'pg.GorevBaslamaTarihi',
+            'pg.Adet',
+            'pg.BekleyenAdet',
+            'pg.Onay',
+            'pg.AraUrunAdiNo',
+            'pg.BolumAdiNo',
+            'pg.UrunIDNo',
+            DB::raw("IFNULL(p.Ad, '') as PersonelAd"),
+            DB::raw("IFNULL(p.Soyad, '') as PersonelSoyad"),
+            DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+        ];
+        $supplierColumns[] = Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo')
+            ? 'pg.SiparisSatirNo'
+            : DB::raw('NULL as SiparisSatirNo');
+        $supplierColumns[] = Schema::hasColumn('tbPersonelGorev', 'SiparisNo')
+            ? 'pg.SiparisNo'
+            : DB::raw('NULL as SiparisNo');
+
+        $remainingNeed = max(0, $missingQuantity);
+
+        return $query
+            ->limit(10)
+            ->get($supplierColumns)
+            ->map(function ($row) use (&$remainingNeed, $bomService) {
+                $openQuantity = max(0, intval($row->Adet ?? 0)) + max(0, intval($row->BekleyenAdet ?? 0));
+                $expectedQuantity = $remainingNeed > 0 ? min($remainingNeed, $openQuantity) : 0;
+                $remainingNeed = max(0, $remainingNeed - $expectedQuantity);
+                $personelNo = intval($row->PersonelNo ?? 0);
+                $fullName = trim((string) ($row->PersonelAd ?? '') . ' ' . (string) ($row->PersonelSoyad ?? ''));
+                $orderNo = trim((string) ($row->SiparisNo ?? ''));
+                $orderItemNo = intval($row->SiparisSatirNo ?? 0);
+
+                return [
+                    'task_no' => intval($row->No ?? 0),
+                    'personnel_no' => $personelNo,
+                    'personnel_name' => $fullName !== '' ? $fullName : ('Personel #' . $personelNo),
+                    'department_name' => trim((string) ($row->BolumAdi ?? '')),
+                    'ready_quantity' => max(0, intval($row->Adet ?? 0)),
+                    'waiting_quantity' => max(0, intval($row->BekleyenAdet ?? 0)),
+                    'open_quantity' => $openQuantity,
+                    'expected_quantity' => $expectedQuantity,
+                    'status' => $this->supplierStatusLabel($row),
+                    'wait_reason' => $this->supplierWaitReason($row, $bomService),
+                    'started_at' => trim((string) ($row->GorevBaslamaTarihi ?? '')),
+                    'order_item_no' => $orderItemNo ?: null,
+                    'order_no' => $orderNo !== '' ? $orderNo : null,
+                    'relation_label' => $orderNo !== ''
+                        ? ('Başka sipariş: ' . $orderNo)
+                        : ($orderItemNo > 0 ? ('Başka satır #' . $orderItemNo) : 'İz bilgisi yok'),
+                    'can_notify' => false,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     private function dependencyPoolRowsForComponent(int $componentNo, array $traceContext, BomService $bomService): array
     {
         if ($componentNo <= 0 || !Schema::hasTable('tbBolumHavuz')) {
@@ -445,6 +591,20 @@ class ProductionPlanningController extends Controller
         if (!$task) {
             return response()->json(['success' => false, 'message' => 'Görev bulunamadı.'], 404);
         }
+
+        $this->refreshPersonnelTaskReadiness(intval($task->PersonelNo ?? 0));
+        $task = DB::table('tbPersonelGorev as pg')
+            ->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
+            ->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No')
+            ->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo')
+            ->where('pg.No', intval($id))
+            ->select(
+                'pg.*',
+                DB::raw("IFNULL(au.AraUrunAdi, '') as AraUrunAdi"),
+                DB::raw("IFNULL(b.BolumAdi, '') as BolumAdi"),
+                DB::raw($personnelNameSql)
+            )
+            ->first();
 
         $shortages = $this->dependencyShortagesForTask($task, $bomService);
 
@@ -611,6 +771,9 @@ class ProductionPlanningController extends Controller
             })
             ->select(
                 'pg.No',
+                'pg.PersonelNo',
+                'pg.UrunIDNo',
+                'pg.BolumAdiNo',
                 'pg.GorevBaslamaTarihi',
                 'au.AraUrunAdi',
                 'au.No as AraUrunAdiNo',
@@ -619,11 +782,20 @@ class ProductionPlanningController extends Controller
                 'pg.BekleyenAdet',
                 'pg.Onay',
                 'au.Yol'
-            )
+            );
+
+        if (Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo')) {
+            $query->addSelect('pg.SiparisSatirNo');
+        }
+        if (Schema::hasColumn('tbPersonelGorev', 'SiparisNo')) {
+            $query->addSelect('pg.SiparisNo');
+        }
+
+        $tasks = $query
             ->orderByRaw("STR_TO_DATE(SUBSTRING(pg.GorevBaslamaTarihi, 1, 10), '%d/%m/%Y') ASC")
             ->get();
 
-        return response()->json(['success' => true, 'data' => $query]);
+        return response()->json(['success' => true, 'data' => $this->enrichPlanningTaskAvailability($tasks)]);
     }
 
     /**
@@ -656,6 +828,8 @@ class ProductionPlanningController extends Controller
             ->select(
                 'pg.No',
                 'pg.PersonelNo',
+                'pg.UrunIDNo',
+                'pg.BolumAdiNo',
                 DB::raw($nameSql),
                 'pg.GorevBaslamaTarihi',
                 'au.AraUrunAdi',
@@ -665,12 +839,21 @@ class ProductionPlanningController extends Controller
                 'pg.BekleyenAdet',
                 'pg.Onay',
                 'au.Yol'
-            )
+            );
+
+        if (Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo')) {
+            $query->addSelect('pg.SiparisSatirNo');
+        }
+        if (Schema::hasColumn('tbPersonelGorev', 'SiparisNo')) {
+            $query->addSelect('pg.SiparisNo');
+        }
+
+        $tasks = $query
             // Tarihe göre sıralayalım
             ->orderByRaw("STR_TO_DATE(SUBSTRING(pg.GorevBaslamaTarihi, 1, 10), '%d/%m/%Y') ASC")
             ->get();
 
-        return response()->json(['success' => true, 'data' => $query]);
+        return response()->json(['success' => true, 'data' => $this->enrichPlanningTaskAvailability($tasks)]);
     }
 
     /**
@@ -763,6 +946,10 @@ class ProductionPlanningController extends Controller
 
             if ($this->isApprovedValue($task->Onay ?? null)) {
                 return response()->json(['success' => false, 'message' => 'Tamamlanmış görev değiştirilemez.'], 422);
+            }
+
+            if ($this->isActiveProductionValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde. Adet değişikliği yapabilmek için önce personelin üretimi tamamlaması veya durdurması gerekiyor.'], 422);
             }
 
             $bomService = app(BomService::class);
@@ -864,7 +1051,7 @@ class ProductionPlanningController extends Controller
                 DB::table('tbPersonelGorev')->where('No', $taskId)->update([
                     'Adet' => $newReady,
                     'BekleyenAdet' => $newWaiting,
-                    'Onay' => null,
+                    'Onay' => 'hazir',
                 ]);
             }
 
@@ -921,15 +1108,19 @@ class ProductionPlanningController extends Controller
 
             // Yeni personel görevi
             $insertData = [
+                'UrunIDNo' => intval($pool->UrunIDNo ?? 0),
                 'PersonelNo' => $personnelNo,
                 'AraUrunAdiNo' => $pool->AraUrunAdiNo,
                 'BolumAdiNo' => $pool->BolumAdiNo,
                 'Adet' => 0, // BomService bölecek
                 'BekleyenAdet' => 0, // BomService bölecek
-                'GorevBaslamaTarihi' => date('Y-m-d 00:00:00', strtotime($targetDate)),
-                'GorevDurumu' => 'Aktif',
-                'Onay' => null,
+                'GorevBaslamaTarihi' => date('d/m/Y', strtotime($targetDate)) . ' 00:00',
+                'Onay' => 'hazir',
             ];
+
+            if (Schema::hasColumn('tbPersonelGorev', 'GorevDurumu')) {
+                $insertData['GorevDurumu'] = 'Aktif';
+            }
 
             if (Schema::hasColumn('tbPersonelGorev', 'SiparisSatirNo') && isset($pool->SiparisSatirNo)) {
                 $insertData['SiparisSatirNo'] = intval($pool->SiparisSatirNo);
@@ -1114,6 +1305,10 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Tamamlanmış görev artırılamaz.']);
             }
 
+            if ($this->isActiveProductionValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde. Artırma işlemi yapabilmek için önce personelin üretimi tamamlaması gerekiyor.']);
+            }
+
             $bomService = app(BomService::class);
             $traceContext = $bomService->traceContextFromRecord($task);
 
@@ -1136,7 +1331,7 @@ class ProductionPlanningController extends Controller
             DB::table('tbPersonelGorev')->where('No', $taskId)->update([
                 'Adet' => intval($task->Adet ?? 0) + 1,
                 'BekleyenAdet' => intval($task->BekleyenAdet ?? 0),
-                'Onay' => null,
+                'Onay' => 'hazir',
             ]);
 
             $newToplam = intval($pool->ToplamAdet ?? 0) - 1;
@@ -1182,6 +1377,10 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
             }
 
+            if ($this->isActiveProductionValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde. Azaltma işlemi yapabilmek için önce personelin üretimi tamamlaması gerekiyor.']);
+            }
+
             $ready = max(0, intval($task->Adet ?? 0));
             if ($ready <= 0) {
                 return response()->json(['success' => false, 'message' => 'Azaltılabilecek adet kalmadı.']);
@@ -1200,7 +1399,7 @@ class ProductionPlanningController extends Controller
                 DB::table('tbPersonelGorev')->where('No', $taskId)->update([
                     'Adet' => $newReady,
                     'BekleyenAdet' => $newPending,
-                    'Onay' => null,
+                    'Onay' => 'hazir',
                 ]);
             }
 
@@ -1248,6 +1447,10 @@ class ProductionPlanningController extends Controller
                 ->first();
             if (!$task) {
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
+            }
+
+            if ($this->isActiveProductionValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde ve havuza iade edilemez. Önce personelin üretimi tamamlaması gerekiyor.'], 422);
             }
 
             $araUrunAdiNo = $task->AraUrunAdiNo;
@@ -1315,6 +1518,10 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Görev bulunamadı.']);
             }
 
+            if ($this->isActiveProductionValue($mevcutGorev->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde. Tarih değiştirmek için önce personelin üretimi tamamlaması gerekiyor.'], 422);
+            }
+
             $araUrunAdiNo = intval($mevcutGorev->AraUrunAdiNo ?? 0);
             $hazirAdet = max(0, intval($mevcutGorev->Adet ?? 0));
             $bekleyenAdet = max(0, intval($mevcutGorev->BekleyenAdet ?? 0));
@@ -1344,7 +1551,8 @@ class ProductionPlanningController extends Controller
             $bomService->scopeQueryToTrace($mevcutKayitQuery, $traceContext, true);
             $mevcutKayit = $mevcutKayitQuery->lockForUpdate()->first();
 
-            if ($mevcutKayit) {
+            if ($mevcutKayit && !$this->isActiveProductionValue($mevcutKayit->Onay ?? null)) {
+                // Hedef görev aktif üretimde değil, birleştirilebilir
                 $mevcutHazir = max(0, intval($mevcutKayit->Adet ?? 0));
                 $mevcutBekleyen = max(0, intval($mevcutKayit->BekleyenAdet ?? 0));
                 $split = $bomService->personnelTaskReadySplit(
@@ -1355,7 +1563,7 @@ class ProductionPlanningController extends Controller
                 DB::table('tbPersonelGorev')->where('No', $mevcutKayit->No)->update([
                     'Adet' => intval($split['ready']),
                     'BekleyenAdet' => intval($split['waiting']),
-                    'Onay' => null,
+                    'Onay' => 'hazir',
                 ]);
 
                 DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
@@ -1479,6 +1687,10 @@ class ProductionPlanningController extends Controller
                 return response()->json(['success' => false, 'message' => 'Tamamlanmış görev aktarılamaz.'], 422);
             }
 
+            if ($this->isActiveProductionValue($task->Onay ?? null)) {
+                return response()->json(['success' => false, 'message' => 'Bu görev şu anda üretimde ve aktarılamaz. Önce personelin üretimi tamamlaması gerekiyor.'], 422);
+            }
+
             $currentPersonnelNo = intval($task->PersonelNo ?? 0);
             if ($currentPersonnelNo === $targetPersonnelNo) {
                 return response()->json(['success' => false, 'message' => 'Görev zaten bu personelde.'], 422);
@@ -1532,8 +1744,8 @@ class ProductionPlanningController extends Controller
 
             $targetName = trim(($targetPersonnel->Ad ?? '') . ' ' . ($targetPersonnel->Soyad ?? ''));
 
-            if ($existing) {
-                // Hedef personelin mevcut görevine birleştir
+            if ($existing && !$this->isActiveProductionValue($existing->Onay ?? null)) {
+                // Hedef personelin mevcut görevine birleştir (aktif üretimde değilse)
                 $existingHazir = max(0, intval($existing->Adet ?? 0));
                 $existingBekleyen = max(0, intval($existing->BekleyenAdet ?? 0));
                 $newTotal = $existingHazir + $existingBekleyen + $toplamAdet;
@@ -1542,7 +1754,7 @@ class ProductionPlanningController extends Controller
                 DB::table('tbPersonelGorev')->where('No', $existing->No)->update([
                     'Adet' => intval($split['ready']),
                     'BekleyenAdet' => intval($split['waiting']),
-                    'Onay' => null,
+                    'Onay' => 'hazir',
                 ]);
 
                 DB::table('tbPersonelGorev')->where('No', $taskId)->delete();
@@ -1550,7 +1762,7 @@ class ProductionPlanningController extends Controller
                 // Sadece personeli değiştir
                 DB::table('tbPersonelGorev')->where('No', $taskId)->update([
                     'PersonelNo' => $targetPersonnelNo,
-                    'Onay' => null,
+                    'Onay' => 'hazir',
                 ]);
             }
 

@@ -15,8 +15,47 @@
     </div>
 
     <section class="panel-surface table-panel">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h3 class="section-title mb-0">Pasif devam eden siparisler</h3>
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-3 pt-2">
+            
+            <!-- Arama -->
+            <div class="d-flex align-items-center" style="flex: 1; max-width: 320px;">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Sip. No, Müşteri veya Ürün Ara..." onkeyup="applyFiltersAndRender()">
+                </div>
+            </div>
+
+            <!-- Sağ Grup (Filtre + Sıralama) -->
+            <div class="d-flex justify-content-end align-items-center flex-wrap gap-4">
+                <!-- Filtreler -->
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted" style="font-size: 0.8rem; font-weight: 500;"><i class="bi bi-filter"></i> İlerleme Durumu:</span>
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="smartFilter" id="sfAll" value="all" autocomplete="off" checked onchange="applyFiltersAndRender()">
+                        <label class="btn btn-outline-secondary btn-sm px-3" for="sfAll">Tümü</label>
+
+                        <input type="radio" class="btn-check" name="smartFilter" id="sfDone" value="done" autocomplete="off" onchange="applyFiltersAndRender()">
+                        <label class="btn btn-outline-secondary btn-sm px-3" for="sfDone">%100</label>
+
+                        <input type="radio" class="btn-check" name="smartFilter" id="sfProgress" value="progress" autocomplete="off" onchange="applyFiltersAndRender()">
+                        <label class="btn btn-outline-secondary btn-sm px-3" for="sfProgress">Sürüyor</label>
+
+                        <input type="radio" class="btn-check" name="smartFilter" id="sfZero" value="zero" autocomplete="off" onchange="applyFiltersAndRender()">
+                        <label class="btn btn-outline-secondary btn-sm px-3" for="sfZero">Başlamadı</label>
+                    </div>
+                </div>
+
+                <!-- Sıralama -->
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted" style="font-size: 0.8rem; font-weight: 500;"><i class="bi bi-sort-down"></i> Sırala:</span>
+                    <select id="sortMode" class="form-select form-select-sm" style="width: auto; min-width: 160px; font-size: 0.82rem;" onchange="applyFiltersAndRender()">
+                        <option value="newest" selected>Tarih (Yeniden Eskiye)</option>
+                        <option value="oldest">Tarih (Eskiden Yeniye)</option>
+                        <option value="high_progress">İlerleme (Yüksekten)</option>
+                        <option value="low_progress">İlerleme (Düşükten)</option>
+                    </select>
+                </div>
+            </div>
         </div>
         <div class="table-shell">
             <table class="table-modern table-sm">
@@ -196,6 +235,8 @@ function renderDetailPanel(row) {
 }
 
 /* ---------- Tablo yükleme ---------- */
+let allOrders = [];
+
 function loadData() {
     fetch('/SiparisApi.ashx?action=getPasifDevamEden')
         .then(r => r.json())
@@ -206,58 +247,112 @@ function loadData() {
                 return;
             }
 
-            const rows = data.items || data.data || [];
-            document.getElementById('toplamBadge').textContent = rows.length + ' kayit';
-
-            if (!rows.length) {
-                document.getElementById('tableBody').innerHTML =
-                    '<tr><td colspan="9" class="text-center py-3 text-muted">Pasif devam eden siparis yok.</td></tr>';
-                return;
-            }
-
-            let html = '';
-            rows.forEach((row, idx) => {
-                let durumBadge = '';
-                if (row.durum === 'PasifDevamEden') {
-                    durumBadge = '<span class="badge" style="background:var(--z-warning-soft);color:var(--z-warning);">Pasif Devam Eden</span>';
-                } else {
-                    durumBadge = `<span class="badge" style="background:var(--z-bg-soft);color:var(--z-text-secondary);">${row.durum || '-'}</span>`;
-                }
-
-                /* Ana satır */
-                html += `<tr class="clickable-row" data-idx="${idx}" onclick="toggleDetail(${idx})" style="cursor:pointer;transition:background 0.15s;">
-                    <td style="text-align:center;padding:8px 4px;">
-                        <i class="bi bi-chevron-right detail-arrow" id="arrow-${idx}" style="transition:transform 0.2s;color:var(--z-text-secondary);font-size:0.8rem;"></i>
-                    </td>
-                    <td>${row.siparisNo || '-'}</td>
-                    <td>${row.musteri || '-'}</td>
-                    <td>${row.urunAdi || '-'}</td>
-                    <td>${row.adet || '-'}</td>
-                    <td>${durumBadge}</td>
-                    <td>${renderMiniBar(row)}</td>
-                    <td><small>${row.isEmriTarihi || '-'}</small></td>
-                    <td>
-                        <button class="btn btn-sm btn-outline-success" title="Yeniden Aktif Et"
-                            onclick="event.stopPropagation(); reactivate(${row.no})">
-                            <i class="bi bi-arrow-counterclockwise"></i>
-                        </button>
-                    </td>
-                </tr>`;
-
-                /* Detay satırı (başlangıçta gizli) */
-                html += `<tr class="detail-row" id="detail-${idx}" style="display:none;">
-                    <td colspan="9" style="padding:0;border-top:none;background:var(--z-bg-subtle,rgba(0,0,0,0.02));">
-                        ${renderDetailPanel(row)}
-                    </td>
-                </tr>`;
-            });
-
-            document.getElementById('tableBody').innerHTML = html;
+            allOrders = data.items || data.data || [];
+            document.getElementById('toplamBadge').textContent = allOrders.length + ' kayit';
+            applyFiltersAndRender();
         })
         .catch(() => {
             document.getElementById('tableBody').innerHTML =
                 '<tr><td colspan="9" class="text-center py-3 text-danger">Veri yuklenemedi.</td></tr>';
         });
+}
+
+function applyFiltersAndRender() {
+    const searchVal = (document.getElementById('searchInput').value || '').toLowerCase();
+    const smartFilterNode = document.querySelector('input[name="smartFilter"]:checked');
+    const smartFilter = smartFilterNode ? smartFilterNode.value : 'all';
+    const sortMode = document.getElementById('sortMode').value;
+
+    let displayRows = [...allOrders];
+
+    /* Arama */
+    if (searchVal) {
+        displayRows = displayRows.filter(row => {
+            return (row.siparisNo && String(row.siparisNo).toLowerCase().includes(searchVal)) ||
+                   (row.musteri && String(row.musteri).toLowerCase().includes(searchVal)) ||
+                   (row.urunAdi && String(row.urunAdi).toLowerCase().includes(searchVal));
+        });
+    }
+
+    /* Filtreleme */
+    if (smartFilter !== 'all') {
+        displayRows = displayRows.filter(row => {
+            const yuzde = parseFloat(row.yuzde) || 0;
+            if (smartFilter === 'done') return yuzde >= 100;
+            if (smartFilter === 'progress') return yuzde > 0 && yuzde < 100;
+            if (smartFilter === 'zero') return yuzde === 0;
+            return true;
+        });
+    }
+
+    /* Sıralama */
+    displayRows.sort((a, b) => {
+        if (sortMode === 'newest' || sortMode === 'oldest') {
+            const parseDate = (str) => {
+                if (!str) return 0;
+                // Örnek format: "17.04.2026 00:33"
+                const parts = str.trim().split(' ');
+                if (parts.length < 2) return 0;
+                const dParts = parts[0].split('.');
+                const tParts = parts[1].split(':');
+                if (dParts.length !== 3 || tParts.length !== 2) return 0;
+                return new Date(dParts[2], dParts[1] - 1, dParts[0], tParts[0], tParts[1]).getTime();
+            };
+            const dA = parseDate(a.isEmriTarihi);
+            const dB = parseDate(b.isEmriTarihi);
+            return sortMode === 'newest' ? dB - dA : dA - dB;
+        } else if (sortMode === 'high_progress' || sortMode === 'low_progress') {
+            const pA = parseFloat(a.yuzde) || 0;
+            const pB = parseFloat(b.yuzde) || 0;
+            return sortMode === 'high_progress' ? pB - pA : pA - pB;
+        }
+        return 0;
+    });
+
+    if (!displayRows.length) {
+        document.getElementById('tableBody').innerHTML =
+            '<tr><td colspan="9" class="text-center py-3 text-muted">Filtreye uygun pasif devam eden siparis yok.</td></tr>';
+        return;
+    }
+
+    let html = '';
+    displayRows.forEach((row, idx) => {
+        let durumBadge = '';
+        if (row.durum === 'PasifDevamEden') {
+            durumBadge = '<span class="badge" style="background:var(--z-warning-soft);color:var(--z-warning);">Pasif Devam Eden</span>';
+        } else {
+            durumBadge = `<span class="badge" style="background:var(--z-bg-soft);color:var(--z-text-secondary);">${row.durum || '-'}</span>`;
+        }
+
+        /* Ana satır */
+        html += `<tr class="clickable-row" data-idx="${idx}" onclick="toggleDetail(${idx})" style="cursor:pointer;transition:background 0.15s;">
+            <td style="text-align:center;padding:8px 4px;">
+                <i class="bi bi-chevron-right detail-arrow" id="arrow-${idx}" style="transition:transform 0.2s;color:var(--z-text-secondary);font-size:0.8rem;"></i>
+            </td>
+            <td>${row.siparisNo || '-'}</td>
+            <td>${row.musteri || '-'}</td>
+            <td>${row.urunAdi || '-'}</td>
+            <td>${row.adet || '-'}</td>
+            <td>${durumBadge}</td>
+            <td>${renderMiniBar(row)}</td>
+            <td><small>${row.isEmriTarihi || '-'}</small></td>
+            <td>
+                <button class="btn btn-sm btn-outline-success" title="Yeniden Aktif Et"
+                    onclick="event.stopPropagation(); reactivate(${row.no})">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </button>
+            </td>
+        </tr>`;
+
+        /* Detay satırı (başlangıçta gizli) */
+        html += `<tr class="detail-row" id="detail-${idx}" style="display:none;">
+            <td colspan="9" style="padding:0;border-top:none;background:var(--z-bg-subtle,rgba(0,0,0,0.02));">
+                ${renderDetailPanel(row)}
+            </td>
+        </tr>`;
+    });
+
+    document.getElementById('tableBody').innerHTML = html;
 }
 
 /* ---------- Satır genişlet/daralt ---------- */

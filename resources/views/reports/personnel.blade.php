@@ -1,10 +1,10 @@
 @extends('layouts.app')
 
-@section('title', 'Personel Raporlari')
+@section('title', 'Tarihe Göre Görevler')
 
 @section('page-actions')
-    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetReportFilters()"><i class="bi bi-arrow-counterclockwise me-1"></i>Sifirla</button>
-    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportExcel()"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetReportFilters()"><i class="bi bi-arrow-counterclockwise me-1"></i>Sıfırla</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportExcel()"><i class="bi bi-filetype-xlsx me-1"></i>Excel</button>
     <button type="button" class="btn btn-primary btn-sm" onclick="resetAndLoad()"><i class="bi bi-search me-1"></i>Yenile</button>
 @endsection
 
@@ -26,7 +26,7 @@
 @section('content')
     <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
         <article class="metric-card">
-            <p class="metric-label">Toplam Kayit</p>
+            <p class="metric-label">Toplam Kayıt</p>
             <h3 class="metric-value" id="summaryRecords">0</h3>
         </article>
         <article class="metric-card">
@@ -34,33 +34,37 @@
             <h3 class="metric-value" id="summaryAmount">0</h3>
         </article>
         <article class="metric-card">
-            <p class="metric-label">Ort. Performans</p>
-            <h3 class="metric-value" id="summaryPerformance">-</h3>
+            <p class="metric-label">Bekleyen Adet</p>
+            <h3 class="metric-value" id="summaryWaiting">0</h3>
         </article>
         <article class="metric-card">
             <p class="metric-label">Filtre Modu</p>
-            <h3 class="metric-value" id="summaryFilterMode" style="font-size: 1rem;">Tum</h3>
+            <h3 class="metric-value" id="summaryFilterMode" style="font-size: 1rem;">Tüm</h3>
         </article>
     </div>
 
     <div class="panel-surface">
         <div class="row g-3 align-items-end">
             <div class="col-xl-3 col-md-6">
+                <label for="searchFilter" class="form-label">Arama</label>
+                <input type="search" id="searchFilter" class="form-control" placeholder="Personel, ürün, ara ürün, bölüm veya no..." oninput="queueSearchLoad()" onkeydown="handleSearchKey(event)">
+            </div>
+            <div class="col-xl-3 col-md-6">
                 <label for="personnelFilter" class="form-label">Personel</label>
                 <select id="personnelFilter" class="form-select" onchange="resetAndLoad()">
-                    <option value="">Tum Personeller</option>
+                    <option value="">Tüm Personeller</option>
                 </select>
             </div>
             <div class="col-xl-3 col-md-6">
-                <label for="dateOptionFilter" class="form-label">Tarih Araligi</label>
+                <label for="dateOptionFilter" class="form-label">Tarih Aralığı</label>
                 <select id="dateOptionFilter" class="form-select" onchange="onDateOptionChange()">
-                    <option value="hepsi">Tum Kayitlar</option>
-                    <option value="gun">Son Gun</option>
+                    <option value="hepsi">Tüm Kayıtlar</option>
+                    <option value="gun">Son Gün</option>
                     <option value="hafta">Son Hafta</option>
                     <option value="ay">Son Ay</option>
                     <option value="6ay">Son 6 Ay</option>
-                    <option value="yil">Son Yil</option>
-                    <option value="tarih">Tarih Sec</option>
+                    <option value="yil">Son Yıl</option>
+                    <option value="tarih">Tarih Seç</option>
                 </select>
             </div>
             <div class="col-xl-2 col-md-6">
@@ -72,21 +76,23 @@
                     <option value="100">100</option>
                 </select>
             </div>
-            <div class="col-xl-4 col-md-6 d-flex align-items-end gap-2">
-                <button type="button" class="btn btn-primary btn-sm" onclick="resetAndLoad()"><i class="bi bi-search me-1"></i>Filtrele</button>
-                <span class="soft-badge" id="summaryStatusChip">Hazir</span>
-                <span class="soft-badge" style="margin-left: auto;">Son: <strong id="summaryUpdatedInline">—</strong></span>
+            <div class="col-xl-1 col-md-6">
+                <button type="button" class="btn btn-primary btn-sm w-100" onclick="resetAndLoad()"><i class="bi bi-search"></i></button>
             </div>
         </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap mt-3">
+            <span class="soft-badge" id="summaryStatusChip">Hazır</span>
+            <span class="soft-badge">Son: <strong id="summaryUpdatedInline">—</strong></span>
+        </div>
         <div class="personnel-date-range" id="customDateRange">
-            <div><label for="startDate" class="form-label">Baslangic</label><input type="date" id="startDate" class="form-control" onchange="resetAndLoad()"></div>
-            <div><label for="endDate" class="form-label">Bitis</label><input type="date" id="endDate" class="form-control" onchange="resetAndLoad()"></div>
+            <div><label for="startDate" class="form-label">Başlangıç</label><input type="date" id="startDate" class="form-control" onchange="resetAndLoad()"></div>
+            <div><label for="endDate" class="form-label">Bitiş</label><input type="date" id="endDate" class="form-control" onchange="resetAndLoad()"></div>
         </div>
     </div>
 
     <section class="panel-surface table-panel">
         <div class="panel-toolbar">
-            <div class="panel-toolbar-copy"><h3>Personel gorev ciktisi</h3></div>
+            <div class="panel-toolbar-copy"><h3>Görev çıktısı</h3></div>
             <div class="panel-toolbar-meta"><span class="soft-badge" id="summaryQueryState">Bekleniyor</span></div>
         </div>
         <div class="table-shell">
@@ -94,23 +100,23 @@
                 <thead>
                     <tr>
                         <th class="sort-head sort-desc" data-sort="gr.No" onclick="sortData('gr.No')">No</th>
-                        <th class="sort-head" data-sort="p.Ad" onclick="sortData('p.Ad')">Personel</th>
-                        <th class="sort-head" data-sort="u.UrunID" onclick="sortData('u.UrunID')">Urun ID</th>
-                        <th class="sort-head" data-sort="au.AraUrunAdi" onclick="sortData('au.AraUrunAdi')">Ara Urun</th>
-                        <th class="sort-head" data-sort="gr.GorevBaslamaTarihi" onclick="sortData('gr.GorevBaslamaTarihi')">Baslama</th>
-                        <th class="sort-head" data-sort="gr.GorevBitisTarihi" onclick="sortData('gr.GorevBitisTarihi')">Bitis</th>
-                        <th class="sort-head" data-sort="gr.Performans" onclick="sortData('gr.Performans')">Performans</th>
-                        <th class="sort-head" data-sort="gr.ToplamAdet" onclick="sortData('gr.ToplamAdet')">Adet</th>
-                        <th class="sort-head" data-sort="b.BolumAdi" onclick="sortData('b.BolumAdi')">Bolum</th>
+                        <th class="sort-head" data-sort="p.Ad" onclick="sortData('p.Ad')">Personel Adı</th>
+                        <th class="sort-head" data-sort="UrunID" onclick="sortData('UrunID')">Ürün Adı</th>
+                        <th class="sort-head" data-sort="AraUrunAdi" onclick="sortData('AraUrunAdi')">Ara Ürün</th>
+                        <th class="sort-head" data-sort="GorevBaslamaTarihi" onclick="sortData('GorevBaslamaTarihi')">Başlama</th>
+                        <th class="sort-head" data-sort="BolumAdi" onclick="sortData('BolumAdi')">Bölüm</th>
+                        <th class="sort-head" data-sort="Adet" onclick="sortData('Adet')">Toplam Adet</th>
+                        <th class="sort-head" data-sort="BekleyenAdet" onclick="sortData('BekleyenAdet')">Bekleyen</th>
+                        <th>Durum</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
-                    <tr><td colspan="9" class="text-center py-4 text-muted">Yukleniyor...</td></tr>
+                    <tr><td colspan="9" class="text-center py-4 text-muted">Yükleniyor...</td></tr>
                 </tbody>
             </table>
         </div>
         <div class="report-pager">
-            <div id="pageInfo" class="text-muted small">Hazir</div>
+            <div id="pageInfo" class="text-muted small">Hazır</div>
             <div class="d-flex align-items-center gap-2 flex-wrap">
                 <button id="btnPrev" class="report-page-box" onclick="prevPage()">&#9664;</button>
                 <span id="pageNumbers" class="report-page-numbers"></span>
@@ -122,11 +128,11 @@
     {{-- Hidden JS compat elements --}}
     <span id="summaryRecordsInline" style="display:none;">0</span>
     <span id="summaryAmountInline" style="display:none;">0</span>
-    <span id="summaryPerformanceInline" style="display:none;">-</span>
-    <span id="summaryPersonnelMeta" style="display:none;">Tum personeller</span>
-    <span id="summaryDateMeta" style="display:none;">Tum kayitlar</span>
-    <span id="summaryPageMeta" style="display:none;">Hazir</span>
-    <span id="exportStateMeta" style="display:none;">Hazir</span>
+    <span id="summaryWaitingInline" style="display:none;">0</span>
+    <span id="summaryPersonnelMeta" style="display:none;">Tüm personeller</span>
+    <span id="summaryDateMeta" style="display:none;">Tüm kayıtlar</span>
+    <span id="summaryPageMeta" style="display:none;">Hazır</span>
+    <span id="exportStateMeta" style="display:none;">Hazır</span>
 @endsection
 
 @push('scripts')
@@ -136,13 +142,22 @@ let currentPage = 1;
 let currentSortCol = 'gr.No';
 let currentSortDir = 'desc';
 let totalPages = 1;
+let searchTimer = null;
 
 function initLookups() {
     return fetch('/api/reports/lookups').then((r) => r.json()).then((data) => {
         const select = document.getElementById('personnelFilter');
-        (data.personnel || []).forEach((person) => {
-            select.innerHTML += `<option value="${person.id}">${escapeHtml(`${person.name || ''} ${person.surname || ''}`.trim())}</option>`;
-        });
+        select.innerHTML = '<option value="">Tüm Personeller</option>';
+        (data.personnel || [])
+            .map((person) => ({
+                id: person.id,
+                name: `${person.name || ''} ${person.surname || ''}`.trim(),
+            }))
+            .filter((person) => person.id && person.name)
+            .sort((a, b) => a.name.localeCompare(b.name, 'tr', { sensitivity: 'base' }))
+            .forEach((person) => {
+                select.innerHTML += `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name)}</option>`;
+            });
         updateFilterSummary();
     }).catch((error) => console.error('Personnel lookup error', error));
 }
@@ -167,7 +182,21 @@ function sortData(col) {
     resetAndLoad();
 }
 
+function queueSearchLoad() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(resetAndLoad, 350);
+}
+
+function handleSearchKey(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        clearTimeout(searchTimer);
+        resetAndLoad();
+    }
+}
+
 function resetReportFilters() {
+    document.getElementById('searchFilter').value = '';
     document.getElementById('personnelFilter').value = '';
     document.getElementById('dateOptionFilter').value = 'hepsi';
     document.getElementById('perPage').value = '20';
@@ -176,24 +205,27 @@ function resetReportFilters() {
     document.getElementById('customDateRange').classList.remove('is-visible');
     currentPage = 1; currentSortCol = 'gr.No'; currentSortDir = 'desc';
     updateSortIndicators(); updateFilterSummary();
-    document.getElementById('exportStateMeta').textContent = 'Hazir';
+    document.getElementById('exportStateMeta').textContent = 'Hazır';
     loadData();
 }
 
 function resetAndLoad() { currentPage = 1; loadData(); }
 
 function loadData() {
-    document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Yukleniyor...</td></tr>';
-    document.getElementById('summaryQueryState').textContent = 'Sorgulaniyor';
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Yükleniyor...</td></tr>';
+    document.getElementById('summaryQueryState').textContent = 'Sorgulanıyor';
     document.getElementById('summaryQueryState').className = 'soft-badge warning';
-    document.getElementById('summaryStatusChip').textContent = 'Yukleniyor';
+    document.getElementById('summaryStatusChip').textContent = 'Yükleniyor';
     document.getElementById('summaryStatusChip').className = 'soft-badge warning';
 
     const params = new URLSearchParams();
+    params.append('report', 'personnel-tasks');
     params.append('page', currentPage);
     params.append('per_page', document.getElementById('perPage').value);
     params.append('sort_by', currentSortCol);
     params.append('sort_dir', currentSortDir);
+    const search = document.getElementById('searchFilter').value.trim();
+    if (search) params.append('q', search);
     const personnel = document.getElementById('personnelFilter').value;
     if (personnel) params.append('personnel_id', personnel);
     const dateOption = document.getElementById('dateOptionFilter').value;
@@ -211,13 +243,13 @@ function loadData() {
         renderPager(data);
         updatePersonnelSummary(rows, data);
         updateFilterSummary(data);
-        document.getElementById('summaryQueryState').textContent = 'Hazir';
+        document.getElementById('summaryQueryState').textContent = 'Hazır';
         document.getElementById('summaryQueryState').className = 'soft-badge success';
-        document.getElementById('summaryStatusChip').textContent = 'Guncel';
+        document.getElementById('summaryStatusChip').textContent = 'Güncel';
         document.getElementById('summaryStatusChip').className = 'soft-badge success';
         document.getElementById('summaryUpdatedInline').textContent = formatClock(new Date());
     }).catch(() => {
-        document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-danger">Veri yuklenemedi.</td></tr>';
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-danger">Veri yüklenemedi.</td></tr>';
         document.getElementById('summaryQueryState').textContent = 'Hata';
         document.getElementById('summaryStatusChip').textContent = 'Hata';
         document.getElementById('summaryQueryState').className = 'soft-badge danger';
@@ -226,7 +258,7 @@ function loadData() {
 }
 
 function renderTable(rows) {
-    if (!rows.length) { document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Kayit yok.</td></tr>'; return; }
+    if (!rows.length) { document.getElementById('tableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">Kayıt yok.</td></tr>'; return; }
     document.getElementById('tableBody').innerHTML = rows.map((row) => `
         <tr>
             <td class="small">${escapeHtml(row.No || '-')}</td>
@@ -234,10 +266,10 @@ function renderTable(rows) {
             <td class="small">${escapeHtml(row.UrunID || '-')}</td>
             <td>${escapeHtml(row.AraUrunAdi || '-')}</td>
             <td class="small">${escapeHtml(row.GorevBaslamaTarihi || '-')}</td>
-            <td class="small">${escapeHtml(row.GorevBitisTarihi || '-')}</td>
-            <td><span class="soft-badge">${formatPerformance(row.Performans)}</span></td>
-            <td><span class="soft-badge success">${formatNumber(row.ToplamAdet || 0)}</span></td>
             <td>${escapeHtml(row.BolumAdi || '-')}</td>
+            <td><span class="soft-badge success">${formatNumber(row.Adet || 0)}</span></td>
+            <td><span class="soft-badge warning">${formatNumber(row.BekleyenAdet || 0)}</span></td>
+            <td><span class="soft-badge ${row.Durum === 'Üretim Dışı' ? 'danger' : 'success'}">${escapeHtml(row.Durum || '-')}</span></td>
         </tr>
     `).join('');
 }
@@ -246,7 +278,7 @@ function renderPager(response) {
     totalPages = response.last_page || 1;
     const current = response.current_page || currentPage;
     const total = response.total || 0;
-    document.getElementById('pageInfo').textContent = `Toplam ${formatNumber(total)} kayit, sayfa ${current} / ${totalPages}`;
+    document.getElementById('pageInfo').textContent = `Toplam ${formatNumber(total)} kayıt, sayfa ${current} / ${totalPages}`;
     document.getElementById('summaryPageMeta').textContent = `${current} / ${totalPages}`;
     document.getElementById('btnPrev').disabled = current <= 1;
     document.getElementById('btnNext').disabled = current >= totalPages;
@@ -262,45 +294,52 @@ function nextPage() { if (currentPage < totalPages) { currentPage++; loadData();
 function goToPage(page) { currentPage = page; loadData(); }
 
 function exportExcel() {
-    Swal.fire({ title: 'Excel aktarilsin mi?', text: 'Aktif filtrelere gore tum kayitlar indirilecek.', icon: 'question', showCancelButton: true, confirmButtonText: 'Evet', cancelButtonText: 'Vazgec', confirmButtonColor: '#0d9488' }).then((result) => {
+    Swal.fire({ title: 'Excel aktarılsın mı?', text: 'Aktif filtrelere göre tüm kayıtlar indirilecek.', icon: 'question', showCancelButton: true, confirmButtonText: 'Evet', cancelButtonText: 'Vazgeç', confirmButtonColor: '#0d9488' }).then((result) => {
         if (!result.isConfirmed) return;
         const params = new URLSearchParams(); params.append('export', 'excel');
+        params.append('report', 'personnel-tasks');
+        params.append('sort_by', currentSortCol);
+        params.append('sort_dir', currentSortDir);
+        const search = document.getElementById('searchFilter').value.trim();
+        if (search) params.append('q', search);
         const personnel = document.getElementById('personnelFilter').value;
         if (personnel) params.append('personnel_id', personnel);
         const dateOption = document.getElementById('dateOptionFilter').value;
         if (dateOption !== 'hepsi') { params.append('date_filter', dateOption); if (dateOption === 'tarih') { params.append('start_date', document.getElementById('startDate').value); params.append('end_date', document.getElementById('endDate').value); } }
-        document.getElementById('exportStateMeta').textContent = 'Excel baslatildi';
+        document.getElementById('exportStateMeta').textContent = 'Excel başlatıldı';
         window.location.href = '/api/reports/tasks-export?' + params.toString();
     });
 }
 
 function updatePersonnelSummary(rows, response = {}) {
     const totalRecords = Number(response.total || rows.length || 0);
-    const totalAmount = rows.reduce((sum, row) => sum + Number(row.ToplamAdet || 0), 0);
-    const performanceRows = rows.map((row) => Number(String(row.Performans ?? '').replace(',', '.'))).filter((v) => !Number.isNaN(v) && v > 0);
-    const avg = performanceRows.length ? performanceRows.reduce((s, v) => s + v, 0) / performanceRows.length : null;
+    const pageAmount = rows.reduce((sum, row) => sum + Number(row.Adet || 0), 0);
+    const pageWaiting = rows.reduce((sum, row) => sum + Number(row.BekleyenAdet || 0), 0);
+    const totalAmount = Number(response.total_adet ?? pageAmount);
+    const totalWaiting = Number(response.total_bekleyen ?? pageWaiting);
     document.getElementById('summaryRecordsInline').textContent = formatNumber(rows.length);
     document.getElementById('summaryAmountInline').textContent = formatNumber(totalAmount);
-    document.getElementById('summaryPerformanceInline').textContent = avg === null ? '-' : formatPerformance(avg);
+    document.getElementById('summaryWaitingInline').textContent = formatNumber(totalWaiting);
     document.getElementById('summaryRecords').textContent = formatNumber(totalRecords);
     document.getElementById('summaryAmount').textContent = formatNumber(totalAmount);
-    document.getElementById('summaryPerformance').textContent = avg === null ? '-' : formatPerformance(avg);
+    document.getElementById('summaryWaiting').textContent = formatNumber(totalWaiting);
 }
 
 function updateFilterSummary(response = {}) {
+    const search = document.getElementById('searchFilter').value.trim();
     const pSel = document.getElementById('personnelFilter');
-    const pLabel = pSel.options[pSel.selectedIndex]?.text || 'Tum Personeller';
+    const pLabel = pSel.options[pSel.selectedIndex]?.text || 'Tüm Personeller';
     const dateValue = document.getElementById('dateOptionFilter').value;
     const perPage = document.getElementById('perPage').value;
-    document.getElementById('summaryPersonnelMeta').textContent = pSel.value ? pLabel : 'Tum personeller';
+    document.getElementById('summaryPersonnelMeta').textContent = pSel.value ? pLabel : 'Tüm personeller';
     document.getElementById('summaryDateMeta').textContent = formatDateMode(dateValue);
-    document.getElementById('summaryFilterMode').textContent = `${pSel.value ? 'Kisi' : 'Tum'} / ${perPage}`;
-    if (!response.current_page) document.getElementById('summaryPageMeta').textContent = 'Hazir';
+    document.getElementById('summaryFilterMode').textContent = `${search ? 'Arama' : (pSel.value ? 'Kişi' : 'Tüm')} / ${perPage}`;
+    if (!response.current_page) document.getElementById('summaryPageMeta').textContent = 'Hazır';
 }
 
 function formatDateMode(value) {
-    const map = { hepsi: 'Tum', gun: 'Gun', hafta: 'Hafta', ay: 'Ay', '6ay': '6Ay', yil: 'Yil', tarih: 'Ozel' };
-    return map[value] || 'Tum';
+    const map = { hepsi: 'Tüm', gun: 'Gün', hafta: 'Hafta', ay: 'Ay', '6ay': '6Ay', yil: 'Yıl', tarih: 'Özel' };
+    return map[value] || 'Tüm';
 }
 
 function formatPerformance(value) { const n = Number(String(value ?? '').replace(',', '.')); if (Number.isNaN(n)) return '-'; return n.toLocaleString('tr-TR', { maximumFractionDigits: 2 }); }

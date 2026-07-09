@@ -1,610 +1,1045 @@
 @extends('layouts.app')
 
-@section('title', 'Is Emri Merkezi')
+@section('title', 'İş Emri Geçmişi')
 
 @section('page-actions')
     <a href="{{ route('workorders.create') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clipboard-plus me-1"></i>Yeni Emir</a>
-    <a href="{{ route('workorders.bulk') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Toplu Is Emri</a>
+    <a href="{{ route('workorders.bulk') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Toplu İş Emri</a>
     <button type="button" class="btn btn-primary btn-sm" onclick="loadCenterFeed(true)"><i class="bi bi-arrow-repeat me-1"></i>Yenile</button>
 @endsection
 
 @push('styles')
 <style>
-    .center-toolbar-grid {
+    /* ─── Filter Bar ─── */
+    .woh-filter-bar {
         display: grid;
-        grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr) auto auto;
+        grid-template-columns: 1fr auto auto auto;
         gap: 12px;
         align-items: end;
     }
-    .center-feed-list,
-    .center-history-list {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
+    .woh-filter-bar .form-label {
+        margin-bottom: 4px;
     }
-    .center-feed-item {
+    .woh-filter-check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-bottom: 8px;
+        font-size: 0.82rem;
+        color: var(--z-text-secondary);
+        cursor: pointer;
+        user-select: none;
+    }
+    .woh-filter-check input { accent-color: var(--z-accent); }
+
+    .woh-view-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px;
+        border: 1px solid var(--z-border);
+        border-radius: 6px;
+        background: var(--z-bg-soft);
+        margin-right: 8px;
+    }
+    .woh-view-switch button {
+        border: 0;
+        background: transparent;
+        color: var(--z-text-secondary);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .woh-view-switch button.active {
+        background: var(--z-bg-card);
+        color: var(--z-text);
+        box-shadow: var(--z-shadow-sm);
+    }
+
+    /* ─── Summary Metrics ─── */
+    .woh-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    .woh-metric-box {
         background: var(--z-bg-card);
         border: 1px solid var(--z-border);
         border-radius: var(--z-radius);
-        padding: 14px;
+        padding: 16px 18px;
+        text-align: center;
+    }
+    .woh-metric-box .metric-num {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: var(--z-text);
+        line-height: 1.2;
+    }
+    .woh-metric-box .metric-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--z-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 4px;
+    }
+    .woh-metric-box.accent .metric-num { color: var(--z-accent); }
+    .woh-metric-box.warning .metric-num { color: var(--z-warning); }
+    .woh-metric-box.danger .metric-num { color: var(--z-danger); }
+
+    /* ─── Timeline Feed ─── */
+    .woh-feed {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .woh-event {
+        display: grid;
+        grid-template-columns: 56px 1fr;
+        gap: 0;
+        position: relative;
+    }
+
+    /* Timeline line */
+    .woh-event-rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+    }
+
+    .woh-event-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--z-accent);
+        border: 2px solid var(--z-bg-card);
+        outline: 2px solid var(--z-accent-soft);
+        flex-shrink: 0;
+        margin-top: 20px;
+        z-index: 2;
+        transition: all 0.2s ease;
+    }
+    .woh-event:hover .woh-event-dot {
+        transform: scale(1.3);
+        outline-width: 3px;
+    }
+    .woh-event-dot.cancelled {
+        background: var(--z-danger);
+        outline-color: var(--z-danger-soft);
+    }
+    .woh-event-dot.stock {
+        background: var(--z-success);
+        outline-color: var(--z-success-soft);
+    }
+    .woh-event-dot.warning {
+        background: var(--z-warning);
+        outline-color: var(--z-warning-soft);
+    }
+
+    .woh-event-line {
+        width: 2px;
+        flex: 1;
+        background: var(--z-border);
+    }
+    .woh-event:last-child .woh-event-line {
+        background: transparent;
+    }
+
+    /* Event Card */
+    .woh-event-card {
+        background: var(--z-bg-card);
+        border: 1px solid var(--z-border);
+        border-radius: var(--z-radius);
+        padding: 16px 18px;
+        margin: 8px 0;
         cursor: pointer;
-        transition: all var(--z-transition);
+        transition: all 0.2s ease;
     }
-    .center-feed-item:hover {
-        background: var(--z-bg-soft);
+    .woh-event-card:hover {
         border-color: #d1d5db;
+        box-shadow: var(--z-shadow-hover);
+        transform: translateX(2px);
     }
-    .center-feed-item.active {
-        background: var(--z-accent-soft);
+    .woh-event-card.expanded {
         border-color: var(--z-accent);
+        box-shadow: 0 0 0 2px var(--z-accent-soft);
     }
-    .center-feed-head {
+
+    .woh-event-top {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
         gap: 12px;
     }
-    .center-feed-title {
+
+    .woh-event-title {
         font-size: 0.9rem;
         font-weight: 600;
         color: var(--z-text);
+        margin: 0;
     }
-    .center-feed-status {
+    .woh-event-subtitle {
         font-size: 0.82rem;
         color: var(--z-text-secondary);
-        margin-top: 4px;
+        margin-top: 3px;
+        line-height: 1.5;
     }
-    .center-feed-copy {
-        font-size: 0.83rem;
-        color: var(--z-text-secondary);
-        margin-top: 10px;
-        line-height: 1.55;
-    }
-    .center-feed-meta {
+
+    .woh-event-tags {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
+        gap: 6px;
         margin-top: 10px;
-        font-size: 0.76rem;
-        color: var(--z-text-muted);
     }
-    .center-answer {
-        padding: 16px;
-        border-radius: var(--z-radius);
-        border: 1px solid var(--z-border);
+    .woh-event-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.72rem;
+        font-weight: 500;
         background: var(--z-bg-soft);
-    }
-    .center-answer.problem {
-        background: var(--z-warning-soft);
-        border-color: rgba(217, 119, 6, 0.18);
-    }
-    .center-answer h3 {
-        font-size: 0.92rem;
-        margin: 0 0 6px;
-    }
-    .center-answer p {
-        margin: 0;
         color: var(--z-text-secondary);
-        line-height: 1.6;
-        font-size: 0.84rem;
     }
-    .center-history-item {
-        padding: 12px 14px;
-        border-radius: var(--z-radius);
-        border: 1px solid var(--z-border);
-        background: var(--z-bg-soft);
+    .woh-event-tag i { font-size: 0.7rem; opacity: 0.7; }
+
+    /* ─── Expanded Detail Drawer ─── */
+    .woh-detail {
+        display: none;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--z-border-light);
     }
-    .center-history-item strong {
-        display: block;
-        margin-bottom: 4px;
-        font-size: 0.84rem;
+    .woh-detail.open { display: block; }
+
+    .woh-detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 24px;
     }
-    .center-history-item p {
-        margin: 0;
-        font-size: 0.82rem;
-        color: var(--z-text-secondary);
-        line-height: 1.55;
-    }
-    .center-history-meta {
-        margin-top: 8px;
-        font-size: 0.75rem;
-        color: var(--z-text-muted);
-    }
-    .center-empty {
-        padding: 24px;
-        border: 1px dashed var(--z-border);
-        border-radius: var(--z-radius);
-        background: var(--z-bg-soft);
-        text-align: center;
-        color: var(--z-text-muted);
-        font-size: 0.84rem;
-    }
-    .center-pagination {
+    .woh-detail-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 12px;
-        margin-top: 14px;
-        flex-wrap: wrap;
+        padding: 6px 0;
+        font-size: 0.82rem;
     }
-    .center-pagination-copy {
+    .woh-detail-row .label { color: var(--z-text-secondary); }
+    .woh-detail-row .value { font-weight: 600; color: var(--z-text); text-align: right; }
+
+    .woh-detail-section-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--z-accent);
+        margin: 14px 0 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--z-border-light);
+    }
+    .woh-detail-section-title:first-child { margin-top: 0; }
+
+    /* History steps inside detail */
+    .woh-history-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 8px;
+    }
+    .woh-history-step {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 8px 12px;
+        background: var(--z-bg-soft);
+        border-radius: var(--z-radius-sm);
+        font-size: 0.82rem;
+    }
+    .woh-history-step-icon {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--z-accent);
+        margin-top: 6px;
+        flex-shrink: 0;
+    }
+    .woh-history-step-text strong {
+        display: block;
+        font-size: 0.82rem;
+        color: var(--z-text);
+    }
+    .woh-history-step-text span {
+        font-size: 0.76rem;
+        color: var(--z-text-muted);
+    }
+
+    /* Diagnostics alerts inside detail */
+    .woh-diag-alert {
+        padding: 10px 14px;
+        border-radius: var(--z-radius-sm);
+        font-size: 0.82rem;
+        margin-top: 6px;
+    }
+    .woh-diag-alert.info { background: #eff6ff; color: #1e40af; }
+    .woh-diag-alert.warn { background: #fffbeb; color: #92400e; }
+    .woh-diag-alert.error { background: #fef2f2; color: #991b1b; }
+    .woh-diag-alert.ok { background: #ecfdf5; color: #065f46; }
+    .woh-diag-alert strong { display: block; margin-bottom: 2px; }
+
+    .woh-order-card {
+        background: var(--z-bg-card);
+        border: 1px solid var(--z-border);
+        border-radius: var(--z-radius);
+        padding: 16px 18px;
+        margin: 8px 0;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .woh-order-card:hover {
+        border-color: #d1d5db;
+        box-shadow: var(--z-shadow-hover);
+        transform: translateX(2px);
+    }
+    .woh-order-card.expanded {
+        border-color: var(--z-accent);
+        box-shadow: 0 0 0 2px var(--z-accent-soft);
+    }
+    .woh-order-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+    }
+    .woh-order-title-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+    }
+    .woh-order-title {
+        margin: 0;
+        color: var(--z-text);
+        font-size: 0.94rem;
+        font-weight: 700;
+    }
+    .woh-order-copy {
+        margin: 5px 0 0;
+        color: var(--z-text-secondary);
+        font-size: 0.82rem;
+        line-height: 1.5;
+    }
+    .woh-order-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+    }
+    .woh-order-task-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+    }
+    .woh-order-task {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 12px;
+        background: var(--z-bg-soft);
+        border-radius: var(--z-radius-sm);
+        font-size: 0.82rem;
+    }
+    .woh-order-task strong {
+        display: block;
+        color: var(--z-text);
+    }
+    .woh-order-task span {
+        display: block;
+        color: var(--z-text-muted);
+        font-size: 0.76rem;
+        margin-top: 2px;
+    }
+
+    /* ─── Pagination ─── */
+    .woh-pagination {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 0 0;
+        border-top: 1px solid var(--z-border-light);
+        margin-top: 8px;
+    }
+    .woh-pagination-info {
         font-size: 0.8rem;
         color: var(--z-text-secondary);
     }
-    .center-json {
-        white-space: pre-wrap;
-        word-break: break-word;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-        font-size: 0.78rem;
-        background: #111827;
-        color: #e5eefc;
-        border-radius: var(--z-radius);
-        padding: 14px;
-        margin-top: 12px;
-        max-height: 280px;
-        overflow: auto;
+    .woh-pagination-btns {
+        display: flex;
+        gap: 8px;
     }
-    @media (max-width: 1024px) {
-        .center-toolbar-grid {
+
+    /* ─── Empty State ─── */
+    .woh-empty {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--z-text-muted);
+    }
+    .woh-empty i {
+        font-size: 2.2rem;
+        display: block;
+        margin-bottom: 12px;
+        opacity: 0.4;
+    }
+    .woh-empty p { font-size: 0.88rem; margin: 0; }
+    .woh-empty small { font-size: 0.78rem; display: block; margin-top: 4px; }
+
+    /* ─── Responsiveness ─── */
+    @media (max-width: 900px) {
+        .woh-filter-bar {
             grid-template-columns: 1fr 1fr;
         }
-    }
-    @media (max-width: 640px) {
-        .center-toolbar-grid {
+        .woh-metrics {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .woh-detail-grid {
             grid-template-columns: 1fr;
         }
-        .center-feed-head {
+        .woh-order-main {
+            grid-template-columns: 1fr;
+        }
+    }
+    @media (max-width: 600px) {
+        .woh-filter-bar {
+            grid-template-columns: 1fr;
+        }
+        .woh-metrics {
+            grid-template-columns: 1fr 1fr;
+        }
+        .woh-event {
+            grid-template-columns: 40px 1fr;
+        }
+        .woh-event-top {
             flex-direction: column;
+        }
+        .woh-view-switch {
+            width: 100%;
+            margin: 0 0 8px;
+        }
+        .woh-view-switch button {
+            flex: 1;
+            justify-content: center;
         }
     }
 </style>
 @endpush
 
 @section('content')
-    <div class="dashboard-hero">
-        <section class="panel-surface hero-banner">
-            <span class="hero-kicker">Is Emri</span>
-            <h2 class="hero-title">Is Emri Merkezi</h2>
-            <p class="hero-description">Bir kaydi secince su anki durumu, en son ne oldugunu, kim yaptigini ve sirada ne oldugunu kolayca gor.</p>
-            <div class="hero-stats">
-                <div class="mini-metric">
-                    <span>Gorunen Kayit</span>
-                    <strong id="centerMetricTotal">0</strong>
-                </div>
-                <div class="mini-metric">
-                    <span>Secili Durum</span>
-                    <strong id="centerMetricStatus">-</strong>
-                </div>
-                <div class="mini-metric">
-                    <span>Acik Sorun</span>
-                    <strong id="centerMetricAlerts">0</strong>
-                </div>
-            </div>
-        </section>
+    {{-- ── Metrics ── --}}
+    <div class="woh-metrics">
+        <div class="woh-metric-box">
+            <div class="metric-num" id="metricTotal">0</div>
+            <div class="metric-label" id="metricTotalLabel">Toplam Sipariş</div>
+        </div>
+        <div class="woh-metric-box accent">
+            <div class="metric-num" id="metricPage">-</div>
+            <div class="metric-label">Sayfa</div>
+        </div>
+        <div class="woh-metric-box warning">
+            <div class="metric-num" id="metricAlerts">0</div>
+            <div class="metric-label">Sorunlu</div>
+        </div>
+        <div class="woh-metric-box">
+            <div class="metric-num" id="metricTime">-</div>
+            <div class="metric-label">Son Yenileme</div>
+        </div>
     </div>
 
-    <section class="panel-surface">
-        <div class="section-header compact">
+    {{-- ── Filter ── --}}
+    <section class="panel-surface" style="margin-bottom: 16px;">
+        <div class="woh-filter-bar">
             <div>
-                <div class="section-overline">Filtre</div>
-                <h3 class="section-title">Kaydi bul</h3>
-                <p class="section-copy">Arama yap, duruma bak veya sadece sorunlu kayitlari goster.</p>
-            </div>
-        </div>
-
-        <div class="center-toolbar-grid">
-            <div>
-                <label class="form-label" for="centerSearchInput">Arama</label>
-                <input id="centerSearchInput" class="form-control" placeholder="Siparis no, gorev no veya urun yaz">
+                <label class="form-label" for="searchInput"><i class="bi bi-search me-1"></i>Ara</label>
+                <input id="searchInput" class="form-control" placeholder="Sipariş no, ürün adı veya görev no yazın...">
             </div>
             <div>
-                <label class="form-label" for="centerStatus">Durum</label>
-                <select id="centerStatus" class="form-select">
-                    <option value="">Hepsi</option>
+                <label class="form-label" for="statusFilter">Durum</label>
+                <select id="statusFilter" class="form-select">
+                    <option value="">Tümü</option>
                 </select>
             </div>
-            <label class="form-check" style="padding-bottom: 8px;">
-                <input id="centerOnlyAlerts" type="checkbox" class="form-check-input">
-                <span class="form-check-label">Sadece sorunlu</span>
+            <label class="woh-filter-check">
+                <input id="alertsOnly" type="checkbox">
+                Sadece sorunlu
             </label>
-            <label class="form-check" style="padding-bottom: 8px;">
-                <input id="centerIncludeSeeded" type="checkbox" class="form-check-input">
-                <span class="form-check-label">Eski aktarim kayitlari</span>
+            <label class="woh-filter-check">
+                <input id="includeOld" type="checkbox">
+                Eski kayıtlar
             </label>
         </div>
     </section>
 
-    <div class="content-grid">
-        <section class="panel-surface">
-            <div class="section-header compact">
-                <div>
-                    <div class="section-overline">Liste</div>
-                    <h3 class="section-title">Kayitlar</h3>
-                    <p class="section-copy" id="centerFeedHint">En yeni anlamli hareketler listelenir.</p>
-                </div>
+    {{-- ── Timeline Feed ── --}}
+    <section class="panel-surface">
+        <div class="section-header compact">
+            <div>
+                <div class="section-overline" id="feedOverline">Sipariş Akışı</div>
+                <h3 class="section-title" id="feedTitle">Siparişe Göre İş Emri Takibi</h3>
+                <p class="section-copy" id="feedHint">Her siparişin altındaki iş emri ve görev hareketleri birlikte gösterilir.</p>
             </div>
-
-            <div id="centerFeedList" class="center-feed-list">
-                <div class="center-empty">Veriler yukleniyor...</div>
-            </div>
-
-            <div class="center-pagination">
-                <div class="center-pagination-copy" id="centerPaginationCopy">Liste hazirlaniyor...</div>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="centerPrevPage">Onceki</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="centerNextPage">Sonraki</button>
+            <div>
+                <div class="woh-view-switch" role="group" aria-label="Görünüm">
+                    <button type="button" id="viewOrdersBtn" class="active" onclick="setCenterView('orders')"><i class="bi bi-bag-check"></i>Siparişler</button>
+                    <button type="button" id="viewTimelineBtn" onclick="setCenterView('timeline')"><i class="bi bi-clock-history"></i>Hareketler</button>
                 </div>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportCenterFeed()"><i class="bi bi-download me-1"></i>CSV</button>
             </div>
-        </section>
-
-        <div id="centerDetailStack" class="stack-list">
-            <section class="panel-surface">
-                <div class="section-header compact">
-                    <div>
-                        <div class="section-overline">Detay</div>
-                        <h3 class="section-title">Secili Kayit</h3>
-                        <p class="section-copy">Soldan bir kayit secince sade ozet burada gorunur.</p>
-                    </div>
-                </div>
-                <div class="center-empty">Soldan bir kayit sec.</div>
-            </section>
         </div>
-    </div>
+
+        <div id="feedContainer" class="woh-feed">
+            <div class="woh-empty">
+                <i class="bi bi-hourglass-split"></i>
+                <p>Veriler yükleniyor...</p>
+            </div>
+        </div>
+
+        <div class="woh-pagination">
+            <div class="woh-pagination-info" id="paginationInfo">Hazırlanıyor...</div>
+            <div class="woh-pagination-btns">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btnPrev" disabled><i class="bi bi-chevron-left me-1"></i>Önceki</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="btnNext" disabled>Sonraki<i class="bi bi-chevron-right ms-1"></i></button>
+            </div>
+        </div>
+    </section>
 @endsection
 
 @push('scripts')
 <script>
-let centerFeed = [];
-let centerSelected = null;
-let centerMeta = { current_page: 1, last_page: 1, per_page: 20, total: 0 };
+/* ───────── State ───────── */
+let feedData = [];
+let centerView = localStorage.getItem('workOrderCenterView') || 'orders';
+let pageMeta = { current_page: 1, last_page: 1, per_page: 12, total: 0 };
+let expandedId = null;
 
-function centerEscape(value) {
-    if (value === null || value === undefined) return '';
-    return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
+/* ───────── Helpers ───────── */
+function esc(v) {
+    if (v == null) return '';
+    return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 }
 
-function centerFormatJson(value) {
-    if (!value) return 'Veri yok';
-    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+function humanStatus(s) {
+    const map = {
+        'UretimBekliyor': 'Üretim Bekliyor',
+        'IsEmriVerildi': 'İş Emri Verildi',
+        'UretimdenKarsilaniyor': 'Üretimden Karşılanıyor',
+        'StokKarsilandi': 'Stoktan Karşılandı',
+        'PasifDevamEden': 'Pasif (Devam Ediyor)',
+        'Pasif': 'Pasif',
+        'IptalEdildi': 'İptal Edildi',
+    };
+    return map[String(s || '')] || s || 'Bilinmiyor';
 }
 
-function centerHumanizeStatus(status) {
-    switch (String(status || '')) {
-        case 'UretimBekliyor': return 'Uretim bekliyor';
-        case 'IsEmriVerildi': return 'Is emri verildi';
-        case 'UretimdenKarsilaniyor': return 'Uretimden karsilaniyor';
-        case 'StokKarsilandi': return 'Stoktan karsilandi';
-        case 'PasifDevamEden': return 'Pasif ama uretimi suruyor';
-        case 'Pasif': return 'Pasif';
-        default: return status || 'Bilinmiyor';
+function statusBadgeClass(s) {
+    switch (String(s || '')) {
+        case 'IptalEdildi': return 'danger';
+        case 'StokKarsilandi': return 'success';
+        case 'IsEmriVerildi': return 'dark';
+        case 'UretimBekliyor': return 'warning';
+        case 'PasifDevamEden': return '';
+        default: return 'primary';
     }
 }
 
-function centerHumanizeSource(event) {
-    const screen = event?.source_screen || '';
-    const action = event?.source_action || '';
-    if (screen && action) return `${screen} / ${action}`;
-    return screen || action || 'Bilinmiyor';
+function dotClass(s) {
+    switch (String(s || '')) {
+        case 'IptalEdildi': return 'cancelled';
+        case 'StokKarsilandi': return 'stock';
+        case 'UretimBekliyor': return 'warning';
+        default: return '';
+    }
 }
 
-function centerBuildRecordTitle(record) {
-    const orderNo = record?.order_no ? String(record.order_no) : '';
-    const workOrderNo = record?.work_order_no ? `Gorev #${record.work_order_no}` : '';
+function setCenterView(view) {
+    centerView = view === 'timeline' ? 'timeline' : 'orders';
+    localStorage.setItem('workOrderCenterView', centerView);
+    pageMeta.current_page = 1;
+    pageMeta.per_page = centerView === 'orders' ? 12 : 20;
+    expandedId = null;
+    applyCenterViewLabels();
+    loadCenterFeed(true);
+}
 
-    if (orderNo && workOrderNo) return `${orderNo} · ${workOrderNo}`;
+function applyCenterViewLabels() {
+    const isOrders = centerView === 'orders';
+    document.getElementById('viewOrdersBtn').classList.toggle('active', isOrders);
+    document.getElementById('viewTimelineBtn').classList.toggle('active', !isOrders);
+    document.getElementById('metricTotalLabel').textContent = isOrders ? 'Toplam Sipariş' : 'Toplam Kayıt';
+    document.getElementById('feedOverline').textContent = isOrders ? 'Sipariş Akışı' : 'Zaman Çizelgesi';
+    document.getElementById('feedTitle').textContent = isOrders ? 'Siparişe Göre İş Emri Takibi' : 'İş Emri Hareketleri';
+}
+
+function buildTitle(item) {
+    const orderNo = item?.order_no ? String(item.order_no) : '';
+    const woNo = item?.work_order_no ? `Görev #${item.work_order_no}` : '';
+    if (orderNo && woNo) return `${orderNo} · ${woNo}`;
     if (orderNo) return orderNo;
-    if (workOrderNo) return workOrderNo;
-
-    const aggregateType = record?.aggregate_type ? String(record.aggregate_type).replaceAll('_', ' ') : 'Kayit';
-    const aggregateId = record?.aggregate_id || record?.id || '-';
-    return `${aggregateType} #${aggregateId}`;
+    if (woNo) return woNo;
+    return `Kayıt #${item?.aggregate_id || item?.id || '-'}`;
 }
 
-function centerCurrentParams() {
-    const params = new URLSearchParams();
-    const q = document.getElementById('centerSearchInput').value.trim();
-    const status = document.getElementById('centerStatus').value;
-    const onlyAlerts = document.getElementById('centerOnlyAlerts').checked;
-    const includeSeeded = document.getElementById('centerIncludeSeeded').checked;
-
-    if (q) params.set('q', q);
-    if (status) params.set('status', status);
-    if (onlyAlerts) params.set('has_alerts', '1');
-    if (includeSeeded) params.set('include_seeded', '1');
-    params.set('per_page', String(centerMeta.per_page || 20));
-
-    return params;
+function formatSource(ev) {
+    const screen = ev?.source_screen || '';
+    const action = ev?.source_action || '';
+    if (screen && action) return `${screen} / ${action}`;
+    return screen || action || '';
 }
 
-async function loadCenterLookups() {
-    const response = await fetch('/api/work-order-center/lookups');
-    const data = await response.json();
-    if (!data.success) return;
-
-    const status = document.getElementById('centerStatus');
-    for (const item of (data.data.statuses || [])) {
-        status.insertAdjacentHTML('beforeend', `<option value="${centerEscape(item)}">${centerEscape(centerHumanizeStatus(item))}</option>`);
-    }
+function formatJson(v) {
+    if (!v) return 'Veri yok';
+    try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
-async function loadCenterFeed(force = false) {
-    const params = centerCurrentParams();
-    if (force) {
-        centerMeta.current_page = 1;
-    }
-    params.set('page', String(centerMeta.current_page || 1));
+/* ───────── Build Query ───────── */
+function buildParams() {
+    const p = new URLSearchParams();
+    const q = document.getElementById('searchInput').value.trim();
+    const status = document.getElementById('statusFilter').value;
+    const alerts = document.getElementById('alertsOnly').checked;
+    const old = document.getElementById('includeOld').checked;
+    if (q) p.set('q', q);
+    if (status) p.set('status', status);
+    if (alerts) p.set('has_alerts', '1');
+    if (old) p.set('include_seeded', '1');
+    p.set('per_page', String(pageMeta.per_page || 20));
+    return p;
+}
 
-    document.getElementById('centerFeedHint').textContent = 'Yukleniyor...';
+function exportCenterFeed() {
+    const params = buildParams();
+    window.location.href = '/api/work-order-center/export?' + params.toString();
+}
+
+/* ───────── Load Lookups ───────── */
+async function loadLookups() {
+    try {
+        const r = await fetch('/api/work-order-center/lookups');
+        const d = await r.json();
+        if (!d.success) return;
+        const sel = document.getElementById('statusFilter');
+        for (const s of (d.data.statuses || [])) {
+            sel.insertAdjacentHTML('beforeend', `<option value="${esc(s)}">${esc(humanStatus(s))}</option>`);
+        }
+    } catch {}
+}
+
+/* ───────── Load Feed ───────── */
+async function loadCenterFeed(reset = false) {
+    const params = buildParams();
+    if (reset) pageMeta.current_page = 1;
+    params.set('page', String(pageMeta.current_page || 1));
+
+    document.getElementById('feedHint').textContent = 'Yükleniyor...';
 
     try {
-        const response = await fetch('/api/work-order-center/feed?' + params.toString());
-        const data = await response.json();
+        const endpoint = centerView === 'orders' ? '/api/work-order-center/orders' : '/api/work-order-center/feed';
+        const r = await fetch(endpoint + '?' + params.toString());
+        const d = await r.json();
 
-        if (!data.success) {
-            document.getElementById('centerFeedList').innerHTML = `<div class="center-empty">${centerEscape(data.message || 'Veri alinamadi.')}</div>`;
-            document.getElementById('centerMetricTotal').textContent = '0';
-            document.getElementById('centerPaginationCopy').textContent = 'Kayit yok';
+        if (!d.success) {
+            document.getElementById('feedContainer').innerHTML = `<div class="woh-empty"><i class="bi bi-exclamation-triangle"></i><p>${esc(d.message || 'Veriler alınamadı.')}</p></div>`;
             return;
         }
 
-        centerFeed = data.data || [];
-        centerMeta = { ...centerMeta, ...(data.meta || {}) };
+        feedData = d.data || [];
+        pageMeta = { ...pageMeta, ...(d.meta || {}) };
 
-        document.getElementById('centerMetricTotal').textContent = String(centerMeta.total || 0);
-        document.getElementById('centerFeedHint').textContent = document.getElementById('centerOnlyAlerts').checked
-            ? 'Sadece sorunlu kayitlar gosteriliyor.'
-            : 'En yeni ve en anlamli hareketler listeleniyor.';
+        // Update metrics
+        document.getElementById('metricTotal').textContent = Number(pageMeta.total || 0).toLocaleString('tr-TR');
+        document.getElementById('metricPage').textContent = `${pageMeta.current_page}/${pageMeta.last_page}`;
+        document.getElementById('metricTime').textContent = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
-        renderCenterFeed();
-        renderCenterPagination();
+        const alertCount = feedData.filter(i => Number(centerView === 'orders' ? (i.alert_count || 0) : (i.snapshot?.alert_count || 0)) > 0).length;
+        document.getElementById('metricAlerts').textContent = String(alertCount);
 
-        const selectedStillVisible = centerSelected
-            ? centerFeed.some((entry) => String(entry.id) === String(centerSelected.id))
+        document.getElementById('feedHint').textContent = document.getElementById('alertsOnly').checked
+            ? 'Sadece sorunlu kayıtlar gösteriliyor.'
+            : (centerView === 'orders'
+                ? 'Her siparişin altındaki iş emri ve görev hareketleri birlikte gösterilir.'
+                : 'En son yapılan işlemler kronolojik sırayla gösterilir.');
+
+        const expandedStillVisible = expandedId
+            ? feedData.some(i => i.id === expandedId)
             : false;
 
-        if ((force || !centerSelected || !selectedStillVisible) && centerFeed.length) {
-            await selectCenterEvent(centerFeed[0]);
-        } else if (!centerFeed.length) {
-            centerSelected = null;
-            renderCenterDetail(null);
+        if (!expandedStillVisible) {
+            expandedId = feedData.length ? feedData[0].id : null;
         }
-    } catch (error) {
-        document.getElementById('centerFeedList').innerHTML = `<div class="center-empty">Sunucu hatasi: ${centerEscape(error.message)}</div>`;
-        document.getElementById('centerPaginationCopy').textContent = 'Kayit yok';
+
+        renderFeed();
+        renderPagination();
+
+        if (expandedId) {
+            if (centerView === 'orders') {
+                renderOrderDetail(expandedId);
+            } else {
+                await loadDetailForItem(expandedId);
+            }
+        }
+    } catch (e) {
+        document.getElementById('feedContainer').innerHTML = `<div class="woh-empty"><i class="bi bi-wifi-off"></i><p>Sunucu hatası</p><small>${esc(e.message)}</small></div>`;
     }
 }
 
-function renderCenterPagination() {
-    const total = Number(centerMeta.total || 0);
-    const perPage = Number(centerMeta.per_page || 20);
-    const currentPage = Number(centerMeta.current_page || 1);
-    const lastPage = Number(centerMeta.last_page || 1);
-    const from = total === 0 ? 0 : ((currentPage - 1) * perPage) + 1;
-    const to = total === 0 ? 0 : Math.min(total, currentPage * perPage);
+/* ───────── Render Feed ───────── */
+function renderOrderFeed(container) {
+    container.innerHTML = feedData.map(order => {
+        const status = order.current_status || '';
+        const summary = order.task_summary || {};
+        const counts = order.counts || {};
+        const hasAlerts = Number(order.alert_count || 0) > 0;
+        const isExpanded = expandedId === order.id;
+        const activeCount = Number(summary.active ?? counts.active_tasks ?? 0);
+        const readyCount = Number(summary.ready ?? counts.ready_tasks ?? 0);
+        const waitingCount = Number(summary.waiting ?? counts.assigned_waiting_tasks ?? 0);
+        const completedCount = Number(summary.completed ?? counts.completed_tasks ?? 0);
+        const poolCount = Number(summary.pool ?? counts.pool ?? 0);
+        const orderTitle = order.order_no ? `Sipariş ${order.order_no}` : `Sipariş satırı #${order.order_item_no || '-'}`;
+        const latest = order.latest_event_title
+            ? `Son hareket: ${order.latest_event_title}`
+            : (order.next_expected_action || 'Bu sipariş için güncel hareket bekleniyor.');
 
-    document.getElementById('centerPaginationCopy').textContent = total === 0
-        ? 'Kayit yok'
-        : `${from}-${to} / ${total} kayit · Sayfa ${currentPage}/${lastPage}`;
-
-    document.getElementById('centerPrevPage').disabled = currentPage <= 1;
-    document.getElementById('centerNextPage').disabled = currentPage >= lastPage;
+        return `
+        <div class="woh-event" data-id="${order.id}">
+            <div class="woh-event-rail">
+                <div class="woh-event-dot ${dotClass(status)}"></div>
+                <div class="woh-event-line"></div>
+            </div>
+            <div class="woh-order-card ${isExpanded ? 'expanded' : ''}" onclick="toggleDetail(${order.id})">
+                <div class="woh-order-main">
+                    <div>
+                        <div class="woh-order-title-row">
+                            <h4 class="woh-order-title">${esc(orderTitle)}</h4>
+                            ${order.work_order_no ? `<span class="woh-event-tag"><i class="bi bi-clipboard-check"></i>İş emri #${esc(order.work_order_no)}</span>` : ''}
+                            ${order.order_item_no ? `<span class="woh-event-tag">Satır #${esc(order.order_item_no)}</span>` : ''}
+                        </div>
+                        <p class="woh-order-copy">${esc(latest)}</p>
+                        <div class="woh-order-stats">
+                            ${order.current_holder_name ? `<span class="woh-event-tag"><i class="bi bi-person-workspace"></i>${esc(order.current_holder_name)}</span>` : ''}
+                            <span class="woh-event-tag"><i class="bi bi-diagram-3"></i>${poolCount} havuz</span>
+                            <span class="woh-event-tag"><i class="bi bi-list-task"></i>${activeCount} aktif</span>
+                            ${readyCount ? `<span class="woh-event-tag"><i class="bi bi-play-circle"></i>${readyCount} hazır</span>` : ''}
+                            ${waitingCount ? `<span class="woh-event-tag"><i class="bi bi-hourglass-split"></i>${waitingCount} bekleyen</span>` : ''}
+                            <span class="woh-event-tag"><i class="bi bi-check2-circle"></i>${completedCount} biten</span>
+                            ${hasAlerts ? `<span class="woh-event-tag" style="background:var(--z-warning-soft);color:var(--z-warning);"><i class="bi bi-exclamation-triangle"></i>${order.alert_count} sorun</span>` : ''}
+                        </div>
+                    </div>
+                    <span class="soft-badge ${statusBadgeClass(status)}">${esc(humanStatus(status))}</span>
+                </div>
+                <div class="woh-detail ${isExpanded ? 'open' : ''}" id="detail-${order.id}">
+                    <div id="detail-content-${order.id}">${isExpanded ? '' : ''}</div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
 }
 
-function renderCenterFeed() {
-    const feedList = document.getElementById('centerFeedList');
-    const includeSeeded = document.getElementById('centerIncludeSeeded').checked;
+function renderFeed() {
+    const container = document.getElementById('feedContainer');
 
-    if (!centerFeed.length) {
-        feedList.innerHTML = includeSeeded
-            ? '<div class="center-empty">Gosterilecek kayit bulunamadi.</div>'
-            : '<div class="center-empty">Gosterilecek hareket bulunamadi. Istersen eski aktarim kayitlarini da acabilirsin.</div>';
+    if (!feedData.length) {
+        container.innerHTML = `<div class="woh-empty"><i class="bi bi-inbox"></i><p>Gösterilecek kayıt bulunamadı.</p><small>Filtre ayarlarınızı değiştirmeyi deneyin.</small></div>`;
         return;
     }
 
-    feedList.innerHTML = centerFeed.map((item) => {
-        const snapshot = item.snapshot || {};
-        const isActive = centerSelected && centerSelected.id === item.id;
-        const statusText = centerHumanizeStatus(snapshot.current_status || item.status_after || item.status_before);
-        const nextStep = snapshot.next_expected_action || item.next_step_human || 'Sonraki adim bilgisi yok.';
-        const meta = [item.happened_at, item.actor_name, centerHumanizeSource(item)].filter(Boolean).join(' · ');
-        const hasAlerts = Number(snapshot.alert_count || 0) > 0;
+    if (centerView === 'orders') {
+        renderOrderFeed(container);
+        return;
+    }
+
+    container.innerHTML = feedData.map(item => {
+        const snap = item.snapshot || {};
+        const status = snap.current_status || item.status_after || item.status_before || '';
+        const nextStep = snap.next_expected_action || item.next_step_human || '';
+        const hasAlerts = Number(snap.alert_count || 0) > 0;
+        const isExpanded = expandedId === item.id;
 
         return `
-            <article class="center-feed-item ${isActive ? 'active' : ''}" data-event-id="${item.id}">
-                <div class="center-feed-head">
+        <div class="woh-event" data-id="${item.id}">
+            <div class="woh-event-rail">
+                <div class="woh-event-dot ${dotClass(status)}"></div>
+                <div class="woh-event-line"></div>
+            </div>
+            <div class="woh-event-card ${isExpanded ? 'expanded' : ''}" onclick="toggleDetail(${item.id})">
+                <div class="woh-event-top">
                     <div>
-                        <div class="center-feed-title">${centerEscape(centerBuildRecordTitle(item))}</div>
-                        <div class="center-feed-status">Su an: <strong>${centerEscape(statusText)}</strong></div>
+                        <h4 class="woh-event-title">${esc(buildTitle(item))}</h4>
+                        <p class="woh-event-subtitle">${esc(item.title_human || 'Kayıt güncellendi')}</p>
                     </div>
-                    <span class="soft-badge ${hasAlerts ? 'warning' : 'success'}">${hasAlerts ? `${snapshot.alert_count} sorun` : 'Normal'}</span>
+                    <span class="soft-badge ${statusBadgeClass(status)}">${esc(humanStatus(status))}</span>
                 </div>
-                <div class="center-feed-copy">
-                    <strong>En son:</strong> ${centerEscape(item.title_human || 'Kayit guncellendi')}<br>
-                    <strong>Siradaki is:</strong> ${centerEscape(nextStep)}
+                <div class="woh-event-tags">
+                    ${item.happened_at ? `<span class="woh-event-tag"><i class="bi bi-clock"></i>${esc(item.happened_at)}</span>` : ''}
+                    ${item.actor_name ? `<span class="woh-event-tag"><i class="bi bi-person"></i>${esc(item.actor_name)}</span>` : ''}
+                    ${hasAlerts ? `<span class="woh-event-tag" style="background:var(--z-warning-soft);color:var(--z-warning);"><i class="bi bi-exclamation-triangle"></i>${snap.alert_count} Sorun</span>` : ''}
+                    ${nextStep ? `<span class="woh-event-tag"><i class="bi bi-arrow-right-circle"></i>${esc(nextStep)}</span>` : ''}
                 </div>
-                <div class="center-feed-meta">${centerEscape(meta)}</div>
-            </article>
-        `;
+                <div class="woh-detail ${isExpanded ? 'open' : ''}" id="detail-${item.id}">
+                    <div id="detail-content-${item.id}">
+                        <div style="padding:12px 0;text-align:center;color:var(--z-text-muted);font-size:0.82rem;">
+                            <i class="bi bi-arrow-repeat" style="animation:spin 1s linear infinite;display:inline-block;"></i> Detaylar yükleniyor...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
     }).join('');
-
-    feedList.querySelectorAll('.center-feed-item').forEach((card) => {
-        card.addEventListener('click', async () => {
-            const item = centerFeed.find((entry) => String(entry.id) === String(card.dataset.eventId));
-            if (item) {
-                await selectCenterEvent(item);
-            }
-        });
-    });
 }
 
-async function selectCenterEvent(item) {
-    centerSelected = item;
-    renderCenterFeed();
+/* ───────── Toggle Detail ───────── */
+async function toggleDetail(id) {
+    if (expandedId === id) {
+        expandedId = null;
+        renderFeed();
+        return;
+    }
+
+    expandedId = id;
+    renderFeed();
+
+    if (centerView === 'orders') {
+        renderOrderDetail(id);
+        return;
+    }
+
+    await loadDetailForItem(id);
+}
+
+function renderOrderDetail(id) {
+    const order = feedData.find(e => e.id === id);
+    if (!order) return;
+
+    const tasks = order.tasks || [];
+    const timeline = order.timeline || [];
+    const status = order.current_status || '';
+    const detail = document.getElementById(`detail-content-${id}`);
+    if (!detail) return;
+
+    let html = '';
+
+    html += `<div class="woh-diag-alert ${Number(order.alert_count || 0) > 0 ? 'warn' : 'ok'}">
+        <strong>${Number(order.alert_count || 0) > 0 ? 'Dikkat gerekiyor' : 'Durum net'}</strong>
+        ${esc(order.next_expected_action || 'Bu siparişin güncel iş emri ve görev bağlantıları aşağıda birlikte görünüyor.')}
+    </div>`;
+
+    html += '<div class="woh-detail-section-title">Sipariş Özeti</div>';
+    html += '<div class="woh-detail-grid">';
+    html += detailRow('Durum', humanStatus(status));
+    html += detailRow('Şu anda kimde?', order.current_holder_name || '-');
+    html += detailRow('Sipariş / Satır', `${order.order_no || '-'} / #${order.order_item_no || '-'}`);
+    html += detailRow('İş emri', order.work_order_no ? `#${order.work_order_no}` : '-');
+    html += detailRow('İlk hareket', order.first_event_at || '-');
+    html += detailRow('Son hareket', order.latest_event_at || order.last_changed_at || '-');
+    html += '</div>';
+
+    html += '<div class="woh-detail-section-title">Görevler</div>';
+    if (tasks.length) {
+        html += '<div class="woh-order-task-list">';
+        tasks.forEach(task => {
+            const meta = [
+                task.holder_name,
+                task.department_name,
+                task.quantity != null ? `Adet ${task.quantity}` : '',
+                task.remaining_quantity != null ? `Bekleyen ${task.remaining_quantity}` : '',
+                task.wait_reason,
+                task.started_at,
+                task.completed_at ? `Bitiş ${task.completed_at}` : '',
+            ].filter(Boolean).join(' · ');
+            html += `<div class="woh-order-task">
+                <div>
+                    <strong>${esc(task.title || 'Görev')}</strong>
+                    <span>${esc(meta || task.latest_event || 'Görev bağlantısı olay kayıtlarından bulundu.')}</span>
+                </div>
+                <span class="soft-badge ${esc(task.status_class || '')}">${esc(task.status_label || 'Güncel')}</span>
+            </div>`;
+        });
+        html += '</div>';
+    } else {
+        html += '<div class="woh-diag-alert info">Bu sipariş için bağlı görev satırı bulunamadı; olay akışından takip edilebilir.</div>';
+    }
+
+    html += '<div class="woh-detail-section-title">Sipariş Akışı</div>';
+    if (timeline.length) {
+        html += '<div class="woh-history-steps">';
+        timeline.slice(0, 12).forEach(step => {
+            const ref = taskRef(step);
+            html += `<div class="woh-history-step">
+                <div class="woh-history-step-icon"></div>
+                <div class="woh-history-step-text">
+                    <strong>${esc(step.title_human || '-')}</strong>
+                    <span>${esc([step.happened_at, step.actor_name, ref].filter(Boolean).join(' · '))}</span>
+                </div>
+            </div>`;
+        });
+        html += '</div>';
+    } else {
+        html += '<div class="woh-diag-alert info">Bu sipariş için olay geçmişi henüz oluşmamış.</div>';
+    }
+
+    detail.innerHTML = html;
+}
+
+function taskRef(step) {
+    if (step?.personnel_task_no) return `Personel görevi #${step.personnel_task_no}`;
+    if (step?.pool_no) return `Havuz #${step.pool_no}`;
+    if (step?.work_order_no) return `İş emri #${step.work_order_no}`;
+    if (step?.special_production_no) return `Özel üretim #${step.special_production_no}`;
+    return '';
+}
+
+async function loadDetailForItem(id) {
+    const item = feedData.find(e => e.id === id);
+    if (!item) return;
 
     const type = item.order_item_no
         ? 'order_item'
         : (item.work_order_no ? 'work_order' : (item.aggregate_type || 'event'));
-    const id = item.order_item_no || item.work_order_no || item.aggregate_id;
-    if (!id) {
-        renderCenterDetail(null);
+    const entityId = item.order_item_no || item.work_order_no || item.aggregate_id;
+    if (!entityId) {
+        document.getElementById(`detail-content-${id}`).innerHTML = '<div class="woh-diag-alert info">Bu kayıt için detay bilgisi bulunamadı.</div>';
         return;
     }
 
     try {
-        const response = await fetch(`/api/work-order-center/entity/${type}/${id}`);
-        const data = await response.json();
-        renderCenterDetail(data.success ? data.data : null);
-    } catch (error) {
-        renderCenterDetail(null, error.message);
+        const r = await fetch(`/api/work-order-center/entity/${type}/${entityId}`);
+        const d = await r.json();
+        if (d.success && d.data) {
+            renderDetailContent(id, d.data);
+        } else {
+            document.getElementById(`detail-content-${id}`).innerHTML = '<div class="woh-diag-alert info">Detay verisi alınamadı.</div>';
+        }
+    } catch (e) {
+        document.getElementById(`detail-content-${id}`).innerHTML = `<div class="woh-diag-alert error"><strong>Hata</strong>${esc(e.message)}</div>`;
     }
 }
 
-function renderCenterDetail(payload, error = '') {
-    const stack = document.getElementById('centerDetailStack');
-
-    if (!payload) {
-        document.getElementById('centerMetricStatus').textContent = '-';
-        document.getElementById('centerMetricAlerts').textContent = '0';
-        stack.innerHTML = `
-            <section class="panel-surface">
-                <div class="section-header compact">
-                    <div>
-                        <div class="section-overline">Detay</div>
-                        <h3 class="section-title">Secili Kayit</h3>
-                        <p class="section-copy">Soldan bir kayit secince sade ozet burada gorunur.</p>
-                    </div>
-                </div>
-                <div class="center-empty">${centerEscape(error || 'Soldan bir kayit sec.')}</div>
-            </section>
-        `;
-        return;
-    }
-
+/* ───────── Render Detail Content ───────── */
+function renderDetailContent(id, payload) {
     const entity = payload.entity || {};
     const narration = payload.narration || {};
     const diagnostics = payload.diagnostics || [];
     const timeline = payload.timeline || [];
-    const technical = payload.technical || {};
     const latestEvent = timeline[0] || {};
-    const recordTitle = centerBuildRecordTitle(entity);
-    const currentStatus = centerHumanizeStatus(entity.current_status);
-    const issueCount = Number(entity.alert_count || 0);
-    const nextStep = entity.next_expected_action || latestEvent.next_step_human || 'Sonraki adim bilgisi yok.';
 
-    document.getElementById('centerMetricStatus').textContent = currentStatus;
-    document.getElementById('centerMetricAlerts').textContent = String(issueCount);
+    let html = '';
 
-    stack.innerHTML = `
-        <section class="panel-surface">
-            <div class="section-header compact">
-                <div>
-                    <div class="section-overline">Ozet</div>
-                    <h3 class="section-title">${centerEscape(recordTitle)}</h3>
-                    <p class="section-copy">Kisa ve anlasilir ozet</p>
-                </div>
-            </div>
-            <div class="center-answer ${issueCount > 0 ? 'problem' : ''}">
-                <h3>${issueCount > 0 ? 'Dikkat gerekiyor' : 'Durum net'}</h3>
-                <p>${centerEscape(narration.short || 'Bu kayit icin ozet bulunamadi.')}</p>
-            </div>
-        </section>
+    // ── Summary
+    if (narration.short) {
+        html += `<div class="woh-diag-alert ${Number(entity.alert_count || 0) > 0 ? 'warn' : 'ok'}"><strong>${Number(entity.alert_count || 0) > 0 ? '⚠ Dikkat gerekiyor' : '✓ Durum net'}</strong>${esc(narration.short)}</div>`;
+    }
 
-        <section class="panel-surface">
-            <div class="section-header compact">
-                <div>
-                    <div class="section-overline">Hizli Cevap</div>
-                    <h3 class="section-title">Bilmek istedigin seyler</h3>
-                </div>
-            </div>
-            <div class="info-list">
-                <div class="info-row"><span>Su an ne durumda?</span><strong>${centerEscape(currentStatus || '-')}</strong></div>
-                <div class="info-row"><span>Su anda kimde?</span><strong>${centerEscape(entity.current_holder_name || '-')}</strong></div>
-                <div class="info-row"><span>En son ne oldu?</span><strong>${centerEscape(latestEvent.title_human || '-')}</strong></div>
-                <div class="info-row"><span>Ne zaman oldu?</span><strong>${centerEscape(latestEvent.happened_at || entity.last_changed_at || '-')}</strong></div>
-                <div class="info-row"><span>Kim yapti?</span><strong>${centerEscape(latestEvent.actor_name || 'Sistem')}</strong></div>
-                <div class="info-row"><span>Nereden yapildi?</span><strong>${centerEscape(centerHumanizeSource(latestEvent))}</strong></div>
-                <div class="info-row"><span>Siradaki is</span><strong>${centerEscape(nextStep)}</strong></div>
-                <div class="info-row"><span>Siparis / Gorev</span><strong>${centerEscape((entity.order_no || '-') + ' / ' + (entity.work_order_no ? ('#' + entity.work_order_no) : '-'))}</strong></div>
-            </div>
-        </section>
+    // ── Key Info
+    html += '<div class="woh-detail-section-title">Bilgiler</div>';
+    html += '<div class="woh-detail-grid">';
+    html += detailRow('Durum', humanStatus(entity.current_status));
+    html += detailRow('Şu anda kimde?', entity.current_holder_name || '-');
+    html += detailRow('En son ne oldu?', latestEvent.title_human || '-');
+    html += detailRow('Ne zaman?', latestEvent.happened_at || entity.last_changed_at || '-');
+    html += detailRow('Kim yaptı?', latestEvent.actor_name || 'Sistem');
+    html += detailRow('Nereden?', formatSource(latestEvent) || '-');
+    html += detailRow('Sipariş / Görev', `${entity.order_no || '-'} / ${entity.work_order_no ? '#' + entity.work_order_no : '-'}`);
+    const nextStep = entity.next_expected_action || latestEvent.next_step_human || '-';
+    html += detailRow('Sıradaki iş', nextStep);
+    html += '</div>';
 
-        <section class="panel-surface">
-            <div class="section-header compact">
-                <div>
-                    <div class="section-overline">Kontrol</div>
-                    <h3 class="section-title">Sorun var mi?</h3>
-                </div>
-            </div>
-            ${diagnostics.length ? diagnostics.map((alert) => `
-                <div class="alert ${alert.severity === 'high' ? 'alert-danger' : (alert.severity === 'medium' ? 'alert-warning' : 'alert-info')} mb-3">
-                    <div>
-                        <strong>${centerEscape(alert.message || 'Uyari')}</strong>
-                        <div class="small mt-2">${centerEscape(alert.suggested_fix || 'Inceleme onerilir.')}</div>
-                    </div>
-                </div>
-            `).join('') : '<div class="alert alert-success mb-0"><div>Su an acik bir sorun gorunmuyor.</div></div>'}
-        </section>
+    // ── Diagnostics
+    if (diagnostics.length) {
+        html += '<div class="woh-detail-section-title">Sorunlar</div>';
+        diagnostics.forEach(a => {
+            const cls = a.severity === 'high' ? 'error' : (a.severity === 'medium' ? 'warn' : 'info');
+            html += `<div class="woh-diag-alert ${cls}"><strong>${esc(a.message || 'Uyarı')}</strong>${esc(a.suggested_fix || 'İnceleme önerilir.')}</div>`;
+        });
+    }
 
-        <section class="panel-surface">
-            <div class="section-header compact">
-                <div>
-                    <div class="section-overline">Gecmis</div>
-                    <h3 class="section-title">Kisa hikaye</h3>
+    // ── Timeline
+    if (timeline.length) {
+        html += '<div class="woh-detail-section-title">Son Adımlar</div>';
+        html += '<div class="woh-history-steps">';
+        timeline.slice(0, 5).forEach(step => {
+            html += `<div class="woh-history-step">
+                <div class="woh-history-step-icon"></div>
+                <div class="woh-history-step-text">
+                    <strong>${esc(step.title_human || '-')}</strong>
+                    <span>${esc([step.happened_at, step.actor_name].filter(Boolean).join(' · '))}</span>
                 </div>
-            </div>
-            ${timeline.length ? `
-                <div class="center-history-list">
-                    ${timeline.slice(0, 6).map((entry) => `
-                        <article class="center-history-item">
-                            <strong>${centerEscape(entry.title_human || '-')}</strong>
-                            <p>${centerEscape(entry.summary_human || '-')}</p>
-                            <div class="center-history-meta">${centerEscape([entry.happened_at, entry.actor_name, centerHumanizeSource(entry)].filter(Boolean).join(' · '))}</div>
-                        </article>
-                    `).join('')}
-                </div>
-            ` : '<div class="center-empty">Bu kayit icin gecmis adim bulunamadi.</div>'}
-        </section>
+            </div>`;
+        });
+        html += '</div>';
+    }
 
-        <section class="panel-surface">
-            <details>
-                <summary class="small text-muted" style="cursor:pointer;">Teknik detay</summary>
-                <div class="center-json">${centerEscape(centerFormatJson(technical))}</div>
-            </details>
-        </section>
-    `;
+    document.getElementById(`detail-content-${id}`).innerHTML = html;
 }
 
+function detailRow(label, value) {
+    return `<div class="woh-detail-row"><span class="label">${esc(label)}</span><span class="value">${esc(value)}</span></div>`;
+}
+
+/* ───────── Pagination ───────── */
+function renderPagination() {
+    const { total, current_page, last_page, per_page } = pageMeta;
+    const from = total === 0 ? 0 : ((current_page - 1) * per_page) + 1;
+    const to = total === 0 ? 0 : Math.min(total, current_page * per_page);
+
+    document.getElementById('paginationInfo').textContent = total === 0
+        ? 'Kayıt bulunamadı'
+        : `${from}–${to} arası / toplam ${Number(total).toLocaleString('tr-TR')} kayıt`;
+
+    document.getElementById('btnPrev').disabled = current_page <= 1;
+    document.getElementById('btnNext').disabled = current_page >= last_page;
+}
+
+/* ───────── Init ───────── */
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadCenterLookups();
+    pageMeta.per_page = centerView === 'orders' ? 12 : 20;
+    applyCenterViewLabels();
+    await loadLookups();
     await loadCenterFeed(true);
 
-    document.getElementById('centerSearchInput').addEventListener('keydown', async (event) => {
-        if (event.key !== 'Enter') return;
-        await loadCenterFeed(true);
+    document.getElementById('searchInput').addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') await loadCenterFeed(true);
     });
 
-    ['centerStatus', 'centerOnlyAlerts', 'centerIncludeSeeded'].forEach((id) => {
+    ['statusFilter', 'alertsOnly', 'includeOld'].forEach(id => {
         document.getElementById(id).addEventListener('change', async () => {
             await loadCenterFeed(true);
         });
     });
 
-    document.getElementById('centerPrevPage').addEventListener('click', async () => {
-        if ((centerMeta.current_page || 1) <= 1) return;
-        centerMeta.current_page = Math.max(1, (centerMeta.current_page || 1) - 1);
+    document.getElementById('btnPrev').addEventListener('click', async () => {
+        if (pageMeta.current_page <= 1) return;
+        pageMeta.current_page--;
+        expandedId = null;
         await loadCenterFeed(false);
     });
 
-    document.getElementById('centerNextPage').addEventListener('click', async () => {
-        if ((centerMeta.current_page || 1) >= (centerMeta.last_page || 1)) return;
-        centerMeta.current_page = Math.min(centerMeta.last_page || 1, (centerMeta.current_page || 1) + 1);
+    document.getElementById('btnNext').addEventListener('click', async () => {
+        if (pageMeta.current_page >= pageMeta.last_page) return;
+        pageMeta.current_page++;
+        expandedId = null;
         await loadCenterFeed(false);
     });
 });
+
+/* Spin animation for loading */
+const styleTag = document.createElement('style');
+styleTag.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+document.head.appendChild(styleTag);
 </script>
 @endpush

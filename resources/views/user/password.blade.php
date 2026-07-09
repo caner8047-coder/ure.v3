@@ -7,6 +7,14 @@
         <div class="section-header compact">
             <div><h3 class="section-title"><i class="bi bi-shield-lock me-2"></i>Sifre Degistir</h3></div>
         </div>
+        @if (session('success'))
+            <div class="alert alert-success">{{ session('success') }}</div>
+        @endif
+        @if ($errors->any())
+            <div class="alert alert-danger">
+                {{ $errors->first() }}
+            </div>
+        @endif
         <form method="POST" action="{{ route('user.password.update') }}">
             @csrf
             <div class="stack-list">

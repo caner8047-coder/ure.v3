@@ -1,6 +1,12 @@
 <script>
 (() => {
     const phraseReplacements = [
+        ['Ürün Ağaçı', 'Ürün Ağacı'],
+        ['ürün ağaçı', 'ürün ağacı'],
+        ['Ağaçı', 'Ağacı'],
+        ['ağaçı', 'ağacı'],
+        ['Urun Agaci', 'Ürün Ağacı'],
+        ['Urun agaci', 'Ürün ağacı'],
         ['Zem Uretim', 'Zem Üretim'],
         ['Siparis Yonetimi', 'Sipariş Yönetimi'],
         ['Stok Yonetimi', 'Stok Yönetimi'],
@@ -203,7 +209,7 @@
         [/\baciklama\b/g, 'açıklama'],
         [/\bzamani\b/g, 'zamanı'],
         [/\bMenuyu\b/g, 'Menüyü'],
-        [/\bac\b/g, 'aç'],
+        [/(?<![a-zA-Z0-9_\p{L}])ac(?![a-zA-Z0-9_\p{L}])/gu, 'aç'],
     ];
 
     const attributeNames = ['placeholder', 'title', 'aria-label'];

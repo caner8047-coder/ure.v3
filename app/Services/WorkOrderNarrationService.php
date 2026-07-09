@@ -72,6 +72,8 @@ class WorkOrderNarrationService
             'issued' => 'is emri acildi',
             'in_pool' => 'havuzda bekliyor',
             'in_production' => 'uretimde',
+            'ready_for_production' => 'uretime hazir',
+            'assigned_waiting' => 'atanmis gorev bekliyor',
             'linked_to_special_production' => 'ozel uretime bagli',
             'fulfilled_from_stock' => 'stoktan karsilanmis',
             'cancelled' => 'kapatilmis',

@@ -4,18 +4,447 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Models\Personnel;
 
 class ReportsController extends Controller
 {
     private function pendingApprovalSql(string $column = 'Onay'): string
     {
-        return "({$column} IS NULL OR {$column} = 0 OR {$column} = '0' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'false')";
+        $normalized = "LOWER(TRIM(CAST({$column} AS CHAR)))";
+
+        return "({$column} IS NULL OR TRIM(CAST({$column} AS CHAR)) = '' OR {$normalized} NOT IN ('1', 'true', 'evet', 'yes'))";
     }
 
     private function approvedApprovalSql(string $column = 'Onay'): string
     {
         return "({$column} = 1 OR {$column} = '1' OR LOWER(TRIM(CAST({$column} AS CHAR))) = 'true')";
+    }
+
+    private function taskReportSort(Request $request, array $map): array
+    {
+        $sortKey = $request->input('sort_by', 'gr.No');
+        $sortBy = $map[$sortKey] ?? $map['gr.No'];
+        $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+        return [$sortBy, $sortDir];
+    }
+
+    private function legacyDateSql(string $column): string
+    {
+        $value = "NULLIF(TRIM(CAST({$column} AS CHAR)), '')";
+
+        return "COALESCE("
+            . "STR_TO_DATE({$value}, '%d/%m/%Y %H:%i:%s'), "
+            . "STR_TO_DATE({$value}, '%d.%m.%Y %H:%i:%s'), "
+            . "STR_TO_DATE({$value}, '%d/%m/%Y %H:%i'), "
+            . "STR_TO_DATE({$value}, '%d.%m.%Y %H:%i'), "
+            . "STR_TO_DATE({$value}, '%d/%m/%Y'), "
+            . "STR_TO_DATE({$value}, '%d.%m.%Y'), "
+            . "STR_TO_DATE({$value}, '%Y-%m-%d %H:%i:%s'), "
+            . "STR_TO_DATE({$value}, '%Y-%m-%dT%H:%i:%s'), "
+            . "STR_TO_DATE({$value}, '%Y-%m-%d')"
+            . ")";
+    }
+
+    private function legacyFullNameSql(string $firstColumn = 'p.Ad', string $lastColumn = 'p.Soyad'): string
+    {
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return "COALESCE({$firstColumn}, '') || ' ' || COALESCE({$lastColumn}, '')";
+        }
+
+        return "CONCAT(IFNULL({$firstColumn}, ''), ' ', IFNULL({$lastColumn}, ''))";
+    }
+
+    private function legacyHasTable(string $table): bool
+    {
+        try {
+            return Schema::hasTable($table);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function legacyHasColumn(string $table, string $column): bool
+    {
+        try {
+            return Schema::hasColumn($table, $column);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function personnelTaskDateColumn(): ?string
+    {
+        foreach (['GorevBaslamaTarihi', 'GorevBaslangicTarihi', 'GorevTarihi'] as $column) {
+            if ($this->legacyHasColumn('tbPersonelGorev', $column)) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+
+    private function personnelTaskProductJoinAvailable(): bool
+    {
+        return $this->legacyHasTable('tbUrunler')
+            && $this->legacyHasColumn('tbPersonelGorev', 'UrunIDNo')
+            && $this->legacyHasColumn('tbUrunler', 'No');
+    }
+
+    private function personnelTaskPersonnelJoinAvailable(): bool
+    {
+        return $this->legacyHasTable('tbPersonel')
+            && $this->legacyHasColumn('tbPersonelGorev', 'PersonelNo')
+            && $this->legacyHasColumn('tbPersonel', 'PersonelNo');
+    }
+
+    private function personnelTaskDepartmentJoinAvailable(): bool
+    {
+        return $this->legacyHasTable('tbBolum')
+            && $this->legacyHasColumn('tbPersonelGorev', 'BolumAdiNo')
+            && $this->legacyHasColumn('tbBolum', 'No');
+    }
+
+    private function personnelTaskComponentJoinAvailable(): bool
+    {
+        return $this->legacyHasTable('tbAraUrun')
+            && $this->legacyHasColumn('tbPersonelGorev', 'AraUrunAdiNo')
+            && $this->legacyHasColumn('tbAraUrun', 'No');
+    }
+
+    private function personnelTaskFullNameSql(): string
+    {
+        if (!$this->personnelTaskPersonnelJoinAvailable()) {
+            return $this->legacyHasColumn('tbPersonelGorev', 'PersonelNo') ? 'CAST(pg.PersonelNo AS CHAR)' : "''";
+        }
+
+        $first = $this->legacyHasColumn('tbPersonel', 'Ad') ? 'p.Ad' : "''";
+        $last = $this->legacyHasColumn('tbPersonel', 'Soyad') ? 'p.Soyad' : "''";
+
+        return $this->legacyFullNameSql($first, $last);
+    }
+
+    private function personnelTaskTextSql(string $table, string $column, string $alias): string
+    {
+        return $this->legacyHasColumn($table, $column) ? "IFNULL({$alias}.{$column}, '')" : "''";
+    }
+
+    private function personnelTaskNumberSql(string $column): string
+    {
+        return $this->legacyHasColumn('tbPersonelGorev', $column) ? "COALESCE(pg.{$column}, 0)" : '0';
+    }
+
+    private function applyTaskReportDateFilter($query, Request $request): void
+    {
+        $dateFilter = $request->input('date_filter');
+        if (!$dateFilter || $dateFilter === 'hepsi') {
+            return;
+        }
+
+        $now = now();
+        $reportDateSql = 'DATE(' . $this->legacyDateSql('gr.GorevBitisTarihi') . ')';
+
+        if ($dateFilter === 'gun') {
+            $query->whereRaw("{$reportDateSql} = ?", [$now->toDateString()]);
+        } elseif ($dateFilter === 'hafta') {
+            $query->whereRaw("{$reportDateSql} BETWEEN ? AND ?", [
+                $now->copy()->startOfWeek()->toDateString(),
+                $now->copy()->endOfWeek()->toDateString(),
+            ]);
+        } elseif ($dateFilter === 'ay') {
+            $query->whereRaw("MONTH({$reportDateSql}) = ? AND YEAR({$reportDateSql}) = ?", [
+                $now->month,
+                $now->year,
+            ]);
+        } elseif ($dateFilter === '6ay') {
+            $query->whereRaw("{$reportDateSql} BETWEEN ? AND ?", [
+                $now->copy()->subMonths(6)->toDateString(),
+                $now->toDateString(),
+            ]);
+        } elseif ($dateFilter === 'yil') {
+            $query->whereRaw("{$reportDateSql} >= ?", [$now->copy()->subYear()->toDateString()]);
+        } elseif ($dateFilter === 'tarih') {
+            $start = $request->input('start_date');
+            $end = $request->input('end_date');
+            if ($start) {
+                $query->whereRaw("{$reportDateSql} >= ?", [$start]);
+            }
+            if ($end) {
+                $query->whereRaw("{$reportDateSql} <= ?", [$end]);
+            }
+        }
+    }
+
+    private function applyTaskReportSearch($query, Request $request): void
+    {
+        $search = trim((string) $request->input('q', $request->input('search', '')));
+        if ($search === '') {
+            return;
+        }
+
+        $like = '%' . $search . '%';
+        $query->where(function ($q) use ($like) {
+            $q->where('gr.No', 'like', $like)
+                ->orWhere('u.UrunID', 'like', $like)
+                ->orWhere('au.AraUrunAdi', 'like', $like)
+                ->orWhere('b.BolumAdi', 'like', $like)
+                ->orWhere('gr.GorevBaslamaTarihi', 'like', $like)
+                ->orWhere('gr.GorevBitisTarihi', 'like', $like)
+                ->orWhereRaw($this->legacyFullNameSql() . ' LIKE ?', [$like]);
+        });
+    }
+
+    private function applyTaskReportSort($query, Request $request, array $map): void
+    {
+        $sortKey = $request->input('sort_by', 'gr.No');
+        $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+        $dateSortColumns = [
+            'gr.GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'gr.GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+            'GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+        ];
+
+        if (isset($dateSortColumns[$sortKey])) {
+            $query->orderByRaw($this->legacyDateSql($dateSortColumns[$sortKey]) . ' ' . $sortDir)
+                ->orderBy('gr.No', 'desc');
+            return;
+        }
+
+        if (in_array($sortKey, ['p.Ad', 'TamAd', 'Personel'], true)) {
+            $query->orderBy('p.Ad', $sortDir)
+                ->orderBy('p.Soyad', $sortDir)
+                ->orderBy('gr.No', 'desc');
+            return;
+        }
+
+        $sortBy = $map[$sortKey] ?? $map['gr.No'];
+        $query->orderBy($sortBy, $sortDir);
+
+        if ($sortBy !== 'gr.No') {
+            $query->orderBy('gr.No', 'desc');
+        }
+    }
+
+    private function personnelTaskBaseQuery()
+    {
+        $query = DB::table('tbPersonelGorev as pg');
+
+        if ($this->personnelTaskProductJoinAvailable()) {
+            $query->leftJoin('tbUrunler as u', 'pg.UrunIDNo', '=', 'u.No');
+        }
+
+        if ($this->personnelTaskPersonnelJoinAvailable()) {
+            $query->leftJoin('tbPersonel as p', 'pg.PersonelNo', '=', 'p.PersonelNo');
+        }
+
+        if ($this->personnelTaskDepartmentJoinAvailable()) {
+            $query->leftJoin('tbBolum as b', 'pg.BolumAdiNo', '=', 'b.No');
+        }
+
+        if ($this->personnelTaskComponentJoinAvailable()) {
+            $query->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No');
+        }
+
+        return $query;
+    }
+
+    private function applyPersonnelTaskDateFilter($query, Request $request): void
+    {
+        $dateFilter = $request->input('date_filter');
+        if (!$dateFilter || $dateFilter === 'hepsi') {
+            return;
+        }
+
+        $dateColumn = $this->personnelTaskDateColumn();
+        if (!$dateColumn) {
+            return;
+        }
+
+        $now = now();
+        $reportDateSql = 'DATE(' . $this->legacyDateSql('pg.' . $dateColumn) . ')';
+
+        if ($dateFilter === 'gun') {
+            $query->whereRaw("{$reportDateSql} = ?", [$now->toDateString()]);
+        } elseif ($dateFilter === 'hafta') {
+            $query->whereRaw("{$reportDateSql} BETWEEN ? AND ?", [
+                $now->copy()->startOfWeek()->toDateString(),
+                $now->copy()->endOfWeek()->toDateString(),
+            ]);
+        } elseif ($dateFilter === 'ay') {
+            $query->whereRaw("MONTH({$reportDateSql}) = ? AND YEAR({$reportDateSql}) = ?", [
+                $now->month,
+                $now->year,
+            ]);
+        } elseif ($dateFilter === '6ay') {
+            $query->whereRaw("{$reportDateSql} BETWEEN ? AND ?", [
+                $now->copy()->subMonths(6)->toDateString(),
+                $now->toDateString(),
+            ]);
+        } elseif ($dateFilter === 'yil') {
+            $query->whereRaw("{$reportDateSql} >= ?", [$now->copy()->subYear()->toDateString()]);
+        } elseif ($dateFilter === 'tarih') {
+            $start = $request->input('start_date');
+            $end = $request->input('end_date');
+            if ($start) {
+                $query->whereRaw("{$reportDateSql} >= ?", [$start]);
+            }
+            if ($end) {
+                $query->whereRaw("{$reportDateSql} <= ?", [$end]);
+            }
+        }
+    }
+
+    private function applyPersonnelTaskSearch($query, Request $request): void
+    {
+        $search = trim((string) $request->input('q', $request->input('search', '')));
+        if ($search === '') {
+            return;
+        }
+
+        $like = '%' . $search . '%';
+        $conditions = [];
+        $rawConditions = [];
+
+        if ($this->personnelTaskProductJoinAvailable() && $this->legacyHasColumn('tbUrunler', 'UrunID')) {
+            $conditions[] = ['u.UrunID', 'like', $like];
+        }
+        if ($this->personnelTaskComponentJoinAvailable() && $this->legacyHasColumn('tbAraUrun', 'AraUrunAdi')) {
+            $conditions[] = ['au.AraUrunAdi', 'like', $like];
+        }
+        if ($this->personnelTaskDepartmentJoinAvailable() && $this->legacyHasColumn('tbBolum', 'BolumAdi')) {
+            $conditions[] = ['b.BolumAdi', 'like', $like];
+        }
+        if ($dateColumn = $this->personnelTaskDateColumn()) {
+            $conditions[] = ['pg.' . $dateColumn, 'like', $like];
+        }
+        if ($this->personnelTaskPersonnelJoinAvailable()) {
+            $rawConditions[] = [$this->personnelTaskFullNameSql() . ' LIKE ?', [$like]];
+        }
+        if (ctype_digit($search) && $this->legacyHasColumn('tbPersonelGorev', 'No')) {
+            $conditions[] = ['pg.No', '=', intval($search)];
+        }
+
+        if (empty($conditions) && empty($rawConditions)) {
+            return;
+        }
+
+        $query->where(function ($q) use ($conditions, $rawConditions) {
+            $first = true;
+            foreach ($conditions as [$column, $operator, $value]) {
+                $method = $first ? 'where' : 'orWhere';
+                $q->{$method}($column, $operator, $value);
+                $first = false;
+            }
+            foreach ($rawConditions as [$sql, $bindings]) {
+                $method = $first ? 'whereRaw' : 'orWhereRaw';
+                $q->{$method}($sql, $bindings);
+                $first = false;
+            }
+        });
+    }
+
+    private function applyPersonnelTaskSort($query, Request $request): void
+    {
+        $sortKey = $request->input('sort_by', 'pg.No');
+        $sortDir = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+        $dateColumn = $this->personnelTaskDateColumn();
+        if ($dateColumn && in_array($sortKey, ['gr.GorevBaslamaTarihi', 'pg.GorevBaslamaTarihi', 'GorevBaslamaTarihi', 'pg.' . $dateColumn, $dateColumn], true)) {
+            $query->orderByRaw($this->legacyDateSql('pg.' . $dateColumn) . ' ' . $sortDir);
+            if ($this->legacyHasColumn('tbPersonelGorev', 'No')) {
+                $query->orderBy('pg.No', 'desc');
+            }
+            return;
+        }
+
+        if ($this->personnelTaskPersonnelJoinAvailable() && in_array($sortKey, ['p.Ad', 'TamAd', 'Personel'], true)) {
+            if ($this->legacyHasColumn('tbPersonel', 'Ad')) {
+                $query->orderBy('p.Ad', $sortDir);
+            }
+            if ($this->legacyHasColumn('tbPersonel', 'Soyad')) {
+                $query->orderBy('p.Soyad', $sortDir);
+            }
+            if ($this->legacyHasColumn('tbPersonelGorev', 'No')) {
+                $query->orderBy('pg.No', 'desc');
+            }
+            return;
+        }
+
+        $map = [];
+        if ($this->legacyHasColumn('tbPersonelGorev', 'No')) {
+            $map['gr.No'] = 'pg.No';
+            $map['pg.No'] = 'pg.No';
+            $map['No'] = 'pg.No';
+        }
+        if ($this->personnelTaskProductJoinAvailable() && $this->legacyHasColumn('tbUrunler', 'UrunID')) {
+            $map['UrunID'] = 'u.UrunID';
+            $map['u.UrunID'] = 'u.UrunID';
+        }
+        if ($this->personnelTaskComponentJoinAvailable() && $this->legacyHasColumn('tbAraUrun', 'AraUrunAdi')) {
+            $map['AraUrunAdi'] = 'au.AraUrunAdi';
+            $map['au.AraUrunAdi'] = 'au.AraUrunAdi';
+        }
+        if ($this->personnelTaskDepartmentJoinAvailable() && $this->legacyHasColumn('tbBolum', 'BolumAdi')) {
+            $map['BolumAdi'] = 'b.BolumAdi';
+            $map['b.BolumAdi'] = 'b.BolumAdi';
+        }
+        if ($this->legacyHasColumn('tbPersonelGorev', 'Adet')) {
+            $map['Adet'] = 'pg.Adet';
+            $map['pg.Adet'] = 'pg.Adet';
+            $map['gr.ToplamAdet'] = 'pg.Adet';
+        }
+        if ($this->legacyHasColumn('tbPersonelGorev', 'BekleyenAdet')) {
+            $map['BekleyenAdet'] = 'pg.BekleyenAdet';
+            $map['pg.BekleyenAdet'] = 'pg.BekleyenAdet';
+        }
+
+        $sortBy = $map[$sortKey] ?? ($map['pg.No'] ?? null);
+        if ($sortBy) {
+            $query->orderBy($sortBy, $sortDir);
+        }
+
+        if ($sortBy !== 'pg.No' && $this->legacyHasColumn('tbPersonelGorev', 'No')) {
+            $query->orderBy('pg.No', 'desc');
+        }
+    }
+
+    private function selectPersonnelTaskColumns($query)
+    {
+        $dateColumn = $this->personnelTaskDateColumn();
+        $dateSql = $dateColumn ? "IFNULL(pg.{$dateColumn}, '')" : "''";
+        $productSql = $this->personnelTaskProductJoinAvailable()
+            ? $this->personnelTaskTextSql('tbUrunler', 'UrunID', 'u')
+            : "''";
+        $componentSql = $this->personnelTaskComponentJoinAvailable()
+            ? $this->personnelTaskTextSql('tbAraUrun', 'AraUrunAdi', 'au')
+            : "''";
+        $departmentSql = $this->personnelTaskDepartmentJoinAvailable()
+            ? $this->personnelTaskTextSql('tbBolum', 'BolumAdi', 'b')
+            : "''";
+        $onaySql = $this->legacyHasColumn('tbPersonelGorev', 'Onay') ? "IFNULL(pg.Onay, '')" : "''";
+        $noSql = $this->legacyHasColumn('tbPersonelGorev', 'No') ? 'pg.No' : '0';
+
+        return $query->select(
+            DB::raw($noSql . ' as No'),
+            DB::raw($this->personnelTaskFullNameSql() . ' as TamAd'),
+            DB::raw($productSql . ' as UrunID'),
+            DB::raw($componentSql . ' as AraUrunAdi'),
+            DB::raw($dateSql . ' as GorevBaslamaTarihi'),
+            DB::raw($departmentSql . ' as BolumAdi'),
+            DB::raw($this->personnelTaskNumberSql('Adet') . ' as Adet'),
+            DB::raw($this->personnelTaskNumberSql('BekleyenAdet') . ' as BekleyenAdet'),
+            DB::raw($onaySql . ' as Onay')
+        );
+    }
+
+    private function personnelTaskStatus(?string $approval): string
+    {
+        $value = strtolower(trim((string) $approval));
+
+        return in_array($value, ['1', 'true', 'evet', 'yes'], true) ? 'Üretim Dışı' : 'Üretimde';
     }
 
     public function dashboardStats()
@@ -24,7 +453,16 @@ class ReportsController extends Controller
         $pending = DB::table('tbSiparisSatir')->where('Aktif', 1)->where('Durum', 'UretimBekliyor')->count();
         $workOrderIssued = DB::table('tbSiparisSatir')->where('Aktif', 1)->where('Durum', 'IsEmriVerildi')->count();
         $totalPersonnel = DB::table('tbPersonel')->count();
-        $activeTasks = DB::table('tbPersonelGorev')->whereRaw($this->pendingApprovalSql())->count();
+        $activeTasks = DB::table('tbPersonelGorev')
+            ->where(function ($query) {
+                $query->where('Adet', '>', 0)
+                    ->orWhere('BekleyenAdet', '>', 0);
+            })
+            ->where(function ($query) {
+                $query->where('BekleyenAdet', '>', 0)
+                    ->orWhereRaw($this->pendingApprovalSql());
+            })
+            ->count();
         $poolTasks = DB::table('tbBolumHavuz')->where('Adet', '>', 0)->count();
 
         return response()->json([
@@ -116,21 +554,116 @@ class ReportsController extends Controller
         ]);
     }
 
+    public function getPersonnelTaskReport(Request $request)
+    {
+        if (!$this->legacyHasTable('tbPersonelGorev')) {
+            return response()->json([
+                'current_page' => 1,
+                'data' => [],
+                'first_page_url' => null,
+                'from' => null,
+                'last_page' => 1,
+                'last_page_url' => null,
+                'links' => [],
+                'next_page_url' => null,
+                'path' => $request->url(),
+                'per_page' => (int) $request->input('per_page', 20),
+                'prev_page_url' => null,
+                'to' => null,
+                'total' => 0,
+                'total_adet' => 0,
+                'total_bekleyen' => 0,
+            ]);
+        }
+
+        $query = $this->personnelTaskBaseQuery();
+
+        if ($request->filled('personnel_id') && $this->legacyHasColumn('tbPersonelGorev', 'PersonelNo')) {
+            $query->where('pg.PersonelNo', $request->input('personnel_id'));
+        }
+
+        $this->applyPersonnelTaskSearch($query, $request);
+        $this->applyPersonnelTaskDateFilter($query, $request);
+
+        $summaryQuery = clone $query;
+        $summary = $summaryQuery
+            ->selectRaw('SUM(' . $this->personnelTaskNumberSql('Adet') . ') as total_adet, SUM(' . $this->personnelTaskNumberSql('BekleyenAdet') . ') as total_bekleyen')
+            ->first();
+
+        $this->applyPersonnelTaskSort($query, $request);
+        $data = $this->selectPersonnelTaskColumns($query)
+            ->paginate((int) $request->input('per_page', 20));
+
+        $payload = $data->toArray();
+        $payload['total_adet'] = (int) ($summary->total_adet ?? 0);
+        $payload['total_bekleyen'] = (int) ($summary->total_bekleyen ?? 0);
+
+        foreach ($payload['data'] as $index => $row) {
+            $row = (array) $row;
+            $row['Durum'] = $this->personnelTaskStatus($row['Onay'] ?? null);
+            $payload['data'][$index] = $row;
+        }
+
+        return response()->json($payload);
+    }
+
+    public function exportPersonnelTasks(Request $request)
+    {
+        if (!$this->legacyHasTable('tbPersonelGorev')) {
+            $xlsx = $this->buildPersonnelTasksWorkbook(collect());
+            $fileName = 'Gorevler_' . date('Ymd_His') . '.xlsx';
+
+            return response($xlsx, 200, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma' => 'no-cache',
+            ]);
+        }
+
+        $query = $this->personnelTaskBaseQuery();
+
+        if ($request->filled('personnel_id') && $this->legacyHasColumn('tbPersonelGorev', 'PersonelNo')) {
+            $query->where('pg.PersonelNo', $request->input('personnel_id'));
+        }
+
+        $this->applyPersonnelTaskSearch($query, $request);
+        $this->applyPersonnelTaskDateFilter($query, $request);
+        $this->applyPersonnelTaskSort($query, $request);
+
+        $tasks = $this->selectPersonnelTaskColumns($query)->get();
+        $xlsx = $this->buildPersonnelTasksWorkbook($tasks);
+        $fileName = 'Gorevler_' . date('Ymd_His') . '.xlsx';
+
+        return response($xlsx, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+        ]);
+    }
+
     // ==========================================
     // Görev Raporları API (Admin)
     // ==========================================
     public function getTaskReport(Request $request)
     {
+        if ($request->input('report') === 'personnel-tasks') {
+            return $this->getPersonnelTaskReport($request);
+        }
+
         // ... (existing code below)
         $query = DB::table('tbGorevler as gr')
             ->join('tbUrunler as u', 'gr.UrunIDNo', '=', 'u.No')
             ->join('tbPersonel as p', 'gr.PersonelNo', '=', 'p.PersonelNo')
             ->join('tbBolum as b', 'gr.BolumAdiNo', '=', 'b.No')
             ->join('tbAraUrun as au', 'gr.AraUrunAdiNo', '=', 'au.No')
+            ->where('gr.PersonelNo', '>', 0)
+            ->where('gr.ToplamAdet', '>', 0)
             ->select(
                 'gr.No',
                 'u.UrunID',
-                DB::raw("CONCAT(p.Ad, ' ', p.Soyad) as TamAd"),
+                DB::raw($this->legacyFullNameSql() . ' as TamAd'),
                 'gr.GorevBaslamaTarihi',
                 'gr.GorevBitisTarihi',
                 'gr.ToplamAdet',
@@ -147,36 +680,30 @@ class ReportsController extends Controller
             $query->where('gr.PersonelNo', $request->input('personnel_id'));
         }
 
-        // Date Filtering — legacy varchar format (dd/MM/yyyy HH:mm) için STR_TO_DATE
-        $dateFilter = $request->input('date_filter');
-        if ($dateFilter && $dateFilter !== 'hepsi') {
-            $now = now();
-            if ($dateFilter === 'gun') {
-                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') = ?", [$now->toDateString()]);
-            } elseif ($dateFilter === 'hafta') {
-                $start = $now->copy()->startOfWeek()->toDateString();
-                $end = $now->copy()->endOfWeek()->toDateString();
-                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') BETWEEN ? AND ?", [$start, $end]);
-            } elseif ($dateFilter === 'ay') {
-                $query->whereRaw("MONTH(STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y')) = ? AND YEAR(STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y')) = ?", [$now->month, $now->year]);
-            } elseif ($dateFilter === '6ay') {
-                $start = $now->copy()->subMonths(6)->toDateString();
-                $end = $now->toDateString();
-                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') BETWEEN ? AND ?", [$start, $end]);
-            } elseif ($dateFilter === 'yil') {
-                $start = $now->copy()->subYear()->toDateString();
-                $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') >= ?", [$start]);
-            } elseif ($dateFilter === 'tarih') {
-                $start = $request->input('start_date');
-                $end = $request->input('end_date');
-                if ($start) $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') >= ?", [$start]);
-                if ($end) $query->whereRaw("STR_TO_DATE(gr.GorevBitisTarihi, '%d/%m/%Y') <= ?", [$end]);
-            }
-        }
+        $this->applyTaskReportSearch($query, $request);
+        $this->applyTaskReportDateFilter($query, $request);
         
-        $sortBy = $request->input('sort_by', 'gr.No');
-        $sortDir = $request->input('sort_dir', 'desc');
-        $query->orderBy($sortBy, $sortDir);
+        $this->applyTaskReportSort($query, $request, [
+            'gr.No' => 'gr.No',
+            'No' => 'gr.No',
+            'p.Ad' => 'p.Ad',
+            'UrunID' => 'u.UrunID',
+            'u.UrunID' => 'u.UrunID',
+            'TamAd' => 'TamAd',
+            'Personel' => 'TamAd',
+            'GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'gr.GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+            'gr.GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+            'ToplamAdet' => 'gr.ToplamAdet',
+            'gr.ToplamAdet' => 'gr.ToplamAdet',
+            'Performans' => 'gr.Performans',
+            'gr.Performans' => 'gr.Performans',
+            'BolumAdi' => 'b.BolumAdi',
+            'b.BolumAdi' => 'b.BolumAdi',
+            'AraUrunAdi' => 'au.AraUrunAdi',
+            'au.AraUrunAdi' => 'au.AraUrunAdi',
+        ]);
 
         $perPage = $request->input('per_page', 20);
         $data = $query->paginate($perPage);
@@ -186,15 +713,21 @@ class ReportsController extends Controller
     
     public function exportExcelTasks(Request $request)
     {
+        if ($request->input('report') === 'personnel-tasks') {
+            return $this->exportPersonnelTasks($request);
+        }
+
         // Replicate logic just for raw query
         $query = DB::table('tbGorevler as gr')
             ->join('tbUrunler as u', 'gr.UrunIDNo', '=', 'u.No')
             ->join('tbPersonel as p', 'gr.PersonelNo', '=', 'p.PersonelNo')
             ->join('tbBolum as b', 'gr.BolumAdiNo', '=', 'b.No')
             ->join('tbAraUrun as au', 'gr.AraUrunAdiNo', '=', 'au.No')
+            ->where('gr.PersonelNo', '>', 0)
+            ->where('gr.ToplamAdet', '>', 0)
             ->select(
                 'gr.No',
-                DB::raw("CONCAT(p.Ad, ' ', p.Soyad) as Personel"),
+                DB::raw($this->legacyFullNameSql() . ' as Personel'),
                 'u.UrunID',
                 'au.AraUrunAdi',
                 'gr.GorevBaslamaTarihi',
@@ -211,30 +744,31 @@ class ReportsController extends Controller
             $query->where('gr.PersonelNo', $request->input('personnel_id'));
         }
 
-        $dateFilter = $request->input('date_filter');
-        if ($dateFilter && $dateFilter !== 'hepsi') {
-            $now = now();
-            if ($dateFilter === 'gun') {
-                $query->whereDate('gr.GorevBitisTarihi', $now->toDateString());
-            } elseif ($dateFilter === 'hafta') {
-                $query->whereBetween('gr.GorevBitisTarihi', [$now->startOfWeek()->toDateString(), $now->endOfWeek()->toDateString()]);
-            } elseif ($dateFilter === 'ay') {
-                $query->whereMonth('gr.GorevBitisTarihi', $now->month)->whereYear('gr.GorevBitisTarihi', $now->year);
-            } elseif ($dateFilter === '6ay') {
-                $query->whereBetween('gr.GorevBitisTarihi', [$now->copy()->subMonths(6)->toDateString(), $now->toDateString()]);
-            } elseif ($dateFilter === 'yil') {
-                $query->whereDate('gr.GorevBitisTarihi', '>=', $now->copy()->subYear()->toDateString());
-            } elseif ($dateFilter === 'tarih') {
-                $start = $request->input('start_date');
-                $end = $request->input('end_date');
-                if ($start) $query->whereDate('gr.GorevBitisTarihi', '>=', $start);
-                if ($end) $query->whereDate('gr.GorevBitisTarihi', '<=', $end);
-            }
-        }
+        $this->applyTaskReportSearch($query, $request);
+        $this->applyTaskReportDateFilter($query, $request);
         
-        $sortBy = $request->input('sort_by', 'gr.No');
-        $sortDir = $request->input('sort_dir', 'desc');
-        $query->orderBy($sortBy, $sortDir);
+        $this->applyTaskReportSort($query, $request, [
+            'gr.No' => 'gr.No',
+            'No' => 'gr.No',
+            'p.Ad' => 'p.Ad',
+            'UrunID' => 'u.UrunID',
+            'u.UrunID' => 'u.UrunID',
+            'TamAd' => 'Personel',
+            'Personel' => 'Personel',
+            'GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'gr.GorevBaslamaTarihi' => 'gr.GorevBaslamaTarihi',
+            'GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+            'gr.GorevBitisTarihi' => 'gr.GorevBitisTarihi',
+            'ToplamAdet' => 'gr.ToplamAdet',
+            'Adet' => 'gr.ToplamAdet',
+            'gr.ToplamAdet' => 'gr.ToplamAdet',
+            'Performans' => 'gr.Performans',
+            'gr.Performans' => 'gr.Performans',
+            'BolumAdi' => 'b.BolumAdi',
+            'b.BolumAdi' => 'b.BolumAdi',
+            'AraUrunAdi' => 'au.AraUrunAdi',
+            'au.AraUrunAdi' => 'au.AraUrunAdi',
+        ]);
 
         $tasks = $query->get();
 
@@ -275,10 +809,259 @@ class ReportsController extends Controller
         return response()->stream($callback, 200, $headers);
     }
 
+    private function buildPersonnelTasksWorkbook($tasks): string
+    {
+        $rows = [[
+            'Personel Adı',
+            'Ürün Adı',
+            'Ara Ürün',
+            'Görev Başlangıç Tarihi',
+            'Toplam Adet',
+            'Bekleyen Adet',
+        ]];
+
+        foreach ($tasks as $row) {
+            $rows[] = [
+                (string) ($row->TamAd ?? ''),
+                (string) ($row->UrunID ?? ''),
+                (string) ($row->AraUrunAdi ?? ''),
+                (string) ($row->GorevBaslamaTarihi ?? ''),
+                (int) ($row->Adet ?? 0),
+                (int) ($row->BekleyenAdet ?? 0),
+            ];
+        }
+
+        return $this->buildSimpleXlsxWorkbook('Görevler', $rows, [24, 44, 50, 22, 12, 14]);
+    }
+
+    private function buildSimpleXlsxWorkbook(string $sheetName, array $rows, array $columnWidths): string
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            throw new \RuntimeException('Sunucuda Excel dosyası oluşturmak için ZipArchive eklentisi gerekli.');
+        }
+
+        $rows = array_values($rows);
+        if (count($rows) === 1) {
+            $rows[] = array_fill(0, count($rows[0]), null);
+        }
+
+        $columnCount = max(1, ...array_map(fn ($row) => max(1, count($row)), $rows));
+        foreach ($rows as $index => $row) {
+            $rows[$index] = array_pad(array_values($row), $columnCount, null);
+        }
+
+        $sheetName = $this->safeExcelSheetName($sheetName);
+        $lastColumn = $this->excelColumnName($columnCount);
+        $lastRow = count($rows);
+        $sheetRef = 'A1:' . $lastColumn . $lastRow;
+
+        $tmp = tempnam(sys_get_temp_dir(), 'reports_xlsx_');
+        if ($tmp === false) {
+            throw new \RuntimeException('Excel dosyası için geçici alan oluşturulamadı.');
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($tmp, \ZipArchive::OVERWRITE) !== true) {
+            @unlink($tmp);
+            throw new \RuntimeException('Excel dosyası oluşturulamadı.');
+        }
+
+        $zip->addFromString('[Content_Types].xml', $this->buildReportXlsxContentTypesXml());
+        $zip->addFromString('_rels/.rels', $this->buildReportXlsxRootRelsXml());
+        $zip->addFromString('docProps/core.xml', $this->buildReportXlsxCoreXml());
+        $zip->addFromString('docProps/app.xml', $this->buildReportXlsxAppXml($sheetName));
+        $zip->addFromString('xl/workbook.xml', $this->buildReportXlsxWorkbookXml($sheetName));
+        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->buildReportXlsxWorkbookRelsXml());
+        $zip->addFromString('xl/styles.xml', $this->buildReportXlsxStylesXml());
+        $zip->addFromString('xl/worksheets/sheet1.xml', $this->buildReportXlsxWorksheetXml($rows, $columnWidths, $sheetRef));
+        $zip->close();
+
+        $content = file_get_contents($tmp);
+        @unlink($tmp);
+
+        if ($content === false) {
+            throw new \RuntimeException('Excel dosyası okunamadı.');
+        }
+
+        return $content;
+    }
+
+    private function buildReportXlsxWorksheetXml(array $rows, array $columnWidths, string $sheetRef): string
+    {
+        $columnCount = count($rows[0]);
+        $columnsXml = '';
+        for ($i = 1; $i <= $columnCount; $i++) {
+            $width = $columnWidths[$i - 1] ?? 18;
+            $columnsXml .= '<col min="' . $i . '" max="' . $i . '" width="' . $width . '" customWidth="1"/>';
+        }
+
+        $sheetDataXml = '';
+        foreach ($rows as $rowIndex => $row) {
+            $rowNumber = $rowIndex + 1;
+            $rowAttributes = ' r="' . $rowNumber . '" spans="1:' . $columnCount . '"';
+            if ($rowIndex === 0) {
+                $rowAttributes .= ' ht="43.2" customHeight="1"';
+            }
+
+            $cellsXml = '';
+            foreach ($row as $columnIndex => $value) {
+                $cellRef = $this->excelColumnName($columnIndex + 1) . $rowNumber;
+                $style = $rowIndex === 0 ? 1 : ((is_int($value) || is_float($value)) ? 3 : 2);
+                $cellsXml .= $this->buildReportXlsxCellXml($cellRef, $value, $style);
+            }
+
+            $sheetDataXml .= '<row' . $rowAttributes . '>' . $cellsXml . '</row>';
+        }
+
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            . '<dimension ref="' . $sheetRef . '"/>'
+            . '<sheetViews><sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>'
+            . '<sheetFormatPr defaultRowHeight="14.4"/>'
+            . '<cols>' . $columnsXml . '</cols>'
+            . '<sheetData>' . $sheetDataXml . '</sheetData>'
+            . '<pageMargins left="0.25" right="0.7086614173228347" top="0.13" bottom="0.29" header="0.3149606299212598" footer="0.3149606299212598"/>'
+            . '<pageSetup paperSize="9" orientation="landscape"/>'
+            . '</worksheet>';
+    }
+
+    private function buildReportXlsxCellXml(string $cellRef, mixed $value, int $style): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return '<c r="' . $cellRef . '" s="' . $style . '"><v>' . $value . '</v></c>';
+        }
+
+        return '<c r="' . $cellRef . '" t="inlineStr" s="' . $style . '"><is><t xml:space="preserve">' . $this->xmlEscape((string) $value) . '</t></is></c>';
+    }
+
+    private function buildReportXlsxContentTypesXml(): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            . '<Default Extension="xml" ContentType="application/xml"/>'
+            . '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+            . '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+            . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            . '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            . '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            . '</Types>';
+    }
+
+    private function buildReportXlsxRootRelsXml(): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            . '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" Target="docProps/core.xml"/>'
+            . '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+            . '</Relationships>';
+    }
+
+    private function buildReportXlsxWorkbookXml(string $sheetName): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            . '<fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="23426"/>'
+            . '<workbookPr defaultThemeVersion="164011"/>'
+            . '<sheets><sheet name="' . $this->xmlEscape($sheetName) . '" sheetId="1" r:id="rId1"/></sheets>'
+            . '</workbook>';
+    }
+
+    private function buildReportXlsxWorkbookRelsXml(): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            . '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+            . '</Relationships>';
+    }
+
+    private function buildReportXlsxStylesXml(): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            . '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>'
+            . '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4B3621"/></patternFill></fill></fills>'
+            . '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD9D9D9"/></left><right style="thin"><color rgb="FFD9D9D9"/></right><top style="thin"><color rgb="FFD9D9D9"/></top><bottom style="thin"><color rgb="FFD9D9D9"/></bottom><diagonal/></border></borders>'
+            . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            . '<cellXfs count="4">'
+            . '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+            . '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+            . '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            . '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>'
+            . '</cellXfs>'
+            . '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+            . '<dxfs count="0"/>'
+            . '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>'
+            . '</styleSheet>';
+    }
+
+    private function buildReportXlsxCoreXml(): string
+    {
+        $timestamp = gmdate('Y-m-d\TH:i:s\Z');
+
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            . '<dc:creator>zemuretim</dc:creator>'
+            . '<cp:lastModifiedBy>zemuretim</cp:lastModifiedBy>'
+            . '<dcterms:created xsi:type="dcterms:W3CDTF">' . $timestamp . '</dcterms:created>'
+            . '<dcterms:modified xsi:type="dcterms:W3CDTF">' . $timestamp . '</dcterms:modified>'
+            . '</cp:coreProperties>';
+    }
+
+    private function buildReportXlsxAppXml(string $sheetName): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+            . '<Application>zemuretim</Application>'
+            . '<DocSecurity>0</DocSecurity>'
+            . '<ScaleCrop>false</ScaleCrop>'
+            . '<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant></vt:vector></HeadingPairs>'
+            . '<TitlesOfParts><vt:vector size="1" baseType="lpstr"><vt:lpstr>' . $this->xmlEscape($sheetName) . '</vt:lpstr></vt:vector></TitlesOfParts>'
+            . '<Company></Company>'
+            . '<LinksUpToDate>false</LinksUpToDate>'
+            . '<SharedDoc>false</SharedDoc>'
+            . '<HyperlinksChanged>false</HyperlinksChanged>'
+            . '<AppVersion>16.0300</AppVersion>'
+            . '</Properties>';
+    }
+
+    private function safeExcelSheetName(string $name): string
+    {
+        $name = preg_replace('/[\[\]\:\*\?\/\\\\]/', ' ', $name) ?: 'Sayfa1';
+        $name = trim($name);
+
+        return mb_substr($name === '' ? 'Sayfa1' : $name, 0, 31);
+    }
+
+    private function excelColumnName(int $index): string
+    {
+        $name = '';
+        while ($index > 0) {
+            $index--;
+            $name = chr(65 + ($index % 26)) . $name;
+            $index = intdiv($index, 26);
+        }
+
+        return $name;
+    }
+
+    private function xmlEscape(string $value): string
+    {
+        return htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+    }
+
     public function getPerformanceReport(Request $request)
     {
         $query = DB::table('tbPersonel as p')
             ->join('tbGorevler as gr', 'p.PersonelNo', '=', 'gr.PersonelNo')
+            ->where('gr.PersonelNo', '>', 0)
+            ->where('gr.ToplamAdet', '>', 0)
             ->select(
                 DB::raw("CONCAT(p.Ad, ' ', p.Soyad) as PersonelAdi"),
                 DB::raw('SUM(gr.Performans) as ToplamPerformansScore'),

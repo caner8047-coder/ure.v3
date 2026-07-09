@@ -26,3 +26,11 @@ Thumbs.db
 # Large and temporary files
 *.fig
 *.bak
+*.zip
+*.xls
+*.xlsx
+*.sql
+guncelleme_paketi_*
+plans/
+storage/backups/
+storage/deployments/

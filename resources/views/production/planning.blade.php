@@ -651,6 +651,17 @@
         font-weight: 800;
     }
 
+    .planning-task-wait-reason {
+        border: 1px solid rgba(220, 38, 38, 0.2);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #b91c1c;
+        font-size: 0.76rem;
+        font-weight: 700;
+        line-height: 1.35;
+        padding: 6px 8px;
+    }
+
     .planning-task-card.is-available .planning-task-status,
     .planning-task-card.is-ready .planning-task-status {
         color: #047857;
@@ -670,6 +681,107 @@
         flex-wrap: wrap;
         justify-content: flex-end;
         gap: 6px;
+    }
+
+    .planning-task-group-card {
+        display: grid;
+        gap: 10px;
+        min-height: 104px;
+        padding: 13px 14px;
+        border: 1px solid #c4b5fd;
+        border-top: 4px solid #7c3aed;
+        border-radius: 5px;
+        background: #f5f3ff;
+        color: #111827;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+
+    .planning-task-group-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 22px rgba(124, 58, 237, 0.16);
+    }
+
+    .planning-task-group-card.is-open {
+        box-shadow: 0 12px 24px rgba(124, 58, 237, 0.18);
+    }
+
+    .planning-task-group-head {
+        align-items: flex-start;
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+    }
+
+    .planning-task-group-copy {
+        min-width: 0;
+        font-size: 0.98rem;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+    }
+
+    .planning-task-group-copy strong {
+        font-weight: 800;
+    }
+
+    .planning-task-group-toggle {
+        align-items: center;
+        background: #ede9fe;
+        border: 1px solid #c4b5fd;
+        border-radius: 999px;
+        color: #6d28d9;
+        display: inline-flex;
+        flex: 0 0 auto;
+        font-size: 0.74rem;
+        font-weight: 800;
+        gap: 5px;
+        min-height: 28px;
+        padding: 3px 9px;
+    }
+
+    .planning-task-group-toggle i {
+        transition: transform 0.18s ease;
+    }
+
+    .planning-task-group-card.is-open .planning-task-group-toggle i {
+        transform: rotate(180deg);
+    }
+
+    .planning-task-group-status {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+    }
+
+    .planning-task-group-status .planning-task-status {
+        color: #6d28d9;
+    }
+
+    .planning-task-group-drawer {
+        background: rgba(255, 255, 255, 0.68);
+        border: 1px solid #ddd6fe;
+        border-radius: 8px;
+        display: grid;
+        gap: 8px;
+        padding: 9px;
+    }
+
+    .planning-task-group-drawer-head {
+        align-items: center;
+        color: #5b21b6;
+        display: flex;
+        font-size: 0.76rem;
+        font-weight: 800;
+        justify-content: space-between;
+        line-height: 1.25;
+    }
+
+    .planning-task-group-drawer .planning-task-card {
+        background: #fff;
+        border-color: #ede9fe;
+        min-height: 0;
+        padding: 9px 10px;
     }
 
     .planning-icon-btn {
@@ -1230,6 +1342,8 @@ let currentPersonelNo = null;
 let currentPlanningView = 'personnel';
 let planningSummaryRows = [];
 const pendingEmptyDateKeys = new Set();
+const expandedPlanningTaskGroups = new Set();
+let currentPlanningTasks = [];
 
 function loadCurrentPlanningTab() {
     if (currentPlanningView === 'summary') {
@@ -1242,7 +1356,9 @@ function loadCurrentPlanningTab() {
 
 function csrfHeaders(extra = {}) {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    return token ? { ...extra, 'X-CSRF-TOKEN': token } : extra;
+    const headers = { 'Accept': 'application/json', ...extra };
+    if (token) headers['X-CSRF-TOKEN'] = token;
+    return headers;
 }
 
 function setPlanningStamp(text) {
@@ -1574,6 +1690,7 @@ function loadPersonelTasks() {
             }
 
             const tasks = data.data || [];
+            currentPlanningTasks = tasks;
             renderTaskBoard(tasks);
             setPlanningStamp();
             setPlanningStatus(tasks.length ? 'Akış aktif' : 'Boş plan', tasks.length ? 'success' : '');
@@ -1602,6 +1719,7 @@ function loadPersonelTasks() {
 }
 
 function renderEmptyPersonnelState() {
+    currentPlanningTasks = [];
     document.getElementById('departmentTitle').textContent = 'Görev Planlaması';
     document.getElementById('planningSelectedPersonnel').textContent = 'Personel seçilmedi';
     document.getElementById('taskCount').textContent = '0 görev';
@@ -1616,11 +1734,12 @@ function renderEmptyPersonnelState() {
 }
 
 function renderTaskBoard(tasks) {
+    currentPlanningTasks = Array.isArray(tasks) ? tasks : [];
     const area = document.getElementById('personelTasksArea');
     const groups = new Map();
-    const firstDepartment = tasks.find((task) => task.BolumAdi)?.BolumAdi || '';
+    const firstDepartment = currentPlanningTasks.find((task) => task.BolumAdi)?.BolumAdi || '';
 
-    tasks.forEach((task) => {
+    currentPlanningTasks.forEach((task) => {
         const info = normalizeDateInfo(task.GorevBaslamaTarihi);
         if (!groups.has(info.key)) {
             groups.set(info.key, { info, tasks: [] });
@@ -1637,7 +1756,7 @@ function renderTaskBoard(tasks) {
     });
 
     document.getElementById('departmentTitle').textContent = firstDepartment ? `${firstDepartment} Bölümü` : 'Görev Planlaması';
-    document.getElementById('taskCount').textContent = `${formatNumber(tasks.length)} görev`;
+    document.getElementById('taskCount').textContent = `${formatNumber(currentPlanningTasks.length)} görev`;
 
     if (!groups.size) {
         area.innerHTML = `
@@ -1666,7 +1785,7 @@ function renderTaskBoard(tasks) {
             overdueCount += group.tasks.length;
         }
     });
-    updateWorkloadBar(tasks, overdueCount);
+    updateWorkloadBar(currentPlanningTasks, overdueCount);
 }
 
 function todayISODate() {
@@ -1690,8 +1809,9 @@ function renderDateColumn(group) {
         const waiting = parseInt(task.BekleyenAdet, 10) || 0;
         return sum + ready + waiting;
     }, 0);
-    const cards = group.tasks.length
-        ? group.tasks.map(renderTaskCard).join('')
+    const visualTasks = buildPlanningVisualTasks(group.tasks, group.info);
+    const cards = visualTasks.length
+        ? visualTasks.map((item) => item.isPlanningGroup ? renderTaskGroupCard(item) : renderTaskCard(item)).join('')
         : '<div class="planning-date-empty">Boş</div>';
 
     // Özellik #5: Bugün/gecikme hesaplama
@@ -1739,8 +1859,16 @@ function updateWorkloadBar(tasks, overdueCount) {
 
     let totalReady = 0, totalWaiting = 0;
     tasks.forEach((t) => {
-        totalReady += Math.max(0, parseInt(t.Adet, 10) || 0);
-        totalWaiting += Math.max(0, parseInt(t.BekleyenAdet, 10) || 0);
+        const ready = Math.max(0, parseInt(t.Adet, 10) || 0);
+        const waiting = Math.max(0, parseInt(t.BekleyenAdet, 10) || 0);
+
+        if (planningTaskHasShortage(t) && !isActiveProduction(t.Onay)) {
+            totalWaiting += ready + waiting;
+            return;
+        }
+
+        totalReady += ready;
+        totalWaiting += waiting;
     });
     const total = totalReady + totalWaiting;
     const pct = total > 0 ? Math.round((totalReady / total) * 100) : 0;
@@ -1756,6 +1884,149 @@ function updateWorkloadBar(tasks, overdueCount) {
     progressWrap.style.display = '';
 }
 
+function normalizePlanningGroupName(value) {
+    return String(value || '')
+        .trim()
+        .toLocaleLowerCase('tr-TR')
+        .replace(/\s+/g, ' ');
+}
+
+function planningTaskGroupKey(task, dateInfo = null) {
+    const amount = parseInt(task.Adet, 10) || 0;
+    const pending = parseInt(task.BekleyenAdet, 10) || 0;
+    const state = planningTaskState(task, amount, pending);
+    const componentNo = Number(task.AraUrunAdiNo || 0);
+    const productNo = Number(task.UrunIDNo || 0);
+    const name = normalizePlanningGroupName(task.AraUrunAdi || task.UrunAdi || '');
+    const identity = componentNo > 0
+        ? `component:${componentNo}`
+        : (productNo > 0 ? `product:${productNo}` : `name:${name}`);
+
+    if (!identity || identity === 'name:') return '';
+
+    return [
+        dateInfo?.key || normalizeDateInfo(task.GorevBaslamaTarihi).key,
+        Number(task.PersonelNo || currentPersonelNo || 0),
+        Number(task.BolumAdiNo || 0),
+        identity,
+        state.className,
+        isApproved(task.Onay) ? 'approved' : (isActiveProduction(task.Onay) ? 'active' : 'open'),
+    ].join('|');
+}
+
+function buildPlanningVisualTasks(tasks, dateInfo = null) {
+    const groups = new Map();
+
+    (tasks || []).forEach((task) => {
+        const key = planningTaskGroupKey(task, dateInfo);
+        if (!key) return;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(task);
+    });
+
+    const emitted = new Set();
+    const visual = [];
+
+    (tasks || []).forEach((task) => {
+        const key = planningTaskGroupKey(task, dateInfo);
+        const rows = key ? (groups.get(key) || []) : [];
+
+        if (rows.length < 2) {
+            visual.push(task);
+            return;
+        }
+
+        if (emitted.has(key)) return;
+        emitted.add(key);
+        visual.push({
+            isPlanningGroup: true,
+            key,
+            tasks: rows,
+            representative: rows[0],
+        });
+    });
+
+    return visual;
+}
+
+function togglePlanningTaskGroup(groupKey, event = null) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    if (!groupKey) return;
+
+    if (expandedPlanningTaskGroups.has(groupKey)) {
+        expandedPlanningTaskGroups.delete(groupKey);
+    } else {
+        expandedPlanningTaskGroups.add(groupKey);
+    }
+
+    if (currentPlanningTasks.length) {
+        renderTaskBoard(currentPlanningTasks);
+    } else if (currentPersonelNo) {
+        loadPersonelTasks();
+    }
+}
+
+function handlePlanningTaskGroupCardClick(groupKey, event = null) {
+    if (event?.target?.closest('button, a, input, select, textarea, .planning-task-card, .planning-task-group-drawer')) {
+        return;
+    }
+
+    togglePlanningTaskGroup(groupKey, event);
+}
+
+function planningJsArg(value) {
+    return escapeHtml(JSON.stringify(String(value || '')));
+}
+
+function planningTaskHasShortage(task) {
+    return Number(task?.HasShortage || 0) === 1
+        || (String(task?.Durum || '').toLocaleLowerCase('tr-TR').includes('alt parça')
+            && String(task?.BeklemeNedeni || '').trim() !== '');
+}
+
+function renderTaskGroupCard(group) {
+    const rows = group.tasks || [];
+    const task = group.representative || rows[0] || {};
+    const amount = rows.reduce((sum, row) => sum + (parseInt(row.Adet, 10) || 0), 0);
+    const pending = rows.reduce((sum, row) => sum + (parseInt(row.BekleyenAdet, 10) || 0), 0);
+    const totalQty = amount + pending;
+    const state = planningTaskState(task, amount, pending);
+    const isOpen = expandedPlanningTaskGroups.has(group.key);
+    const groupKeyArg = planningJsArg(group.key);
+    const drawer = isOpen
+        ? `<div class="planning-task-group-drawer">
+                <div class="planning-task-group-drawer-head">
+                    <strong>Parçalı görev dökümü</strong>
+                    <span>${formatNumber(rows.length)} kayıt</span>
+                </div>
+                ${rows.map(renderTaskCard).join('')}
+           </div>`
+        : '';
+
+    return `
+        <div class="planning-task-group-card ${isOpen ? 'is-open' : ''}" data-group-key="${escapeHtml(group.key)}" onclick="handlePlanningTaskGroupCardClick(${groupKeyArg}, event)">
+            <div class="planning-task-group-head">
+                <div class="planning-task-group-copy">
+                    <strong>Ara Ürün:</strong> ${escapeHtml(task.AraUrunAdi || 'Bilinmiyor')}<br>
+                    <strong>Adet:</strong> ${formatNumber(amount)}
+                    <strong>Bekleyen:</strong> ${formatNumber(pending)}
+                </div>
+                <button type="button" class="planning-task-group-toggle" onclick="togglePlanningTaskGroup(${groupKeyArg}, event)" aria-expanded="${isOpen ? 'true' : 'false'}">
+                    ${formatNumber(rows.length)} görev <i class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+            <div class="planning-task-group-status">
+                <span class="planning-task-status"><i class="bi ${state.icon}"></i>${escapeHtml(state.label)}</span>
+                <span class="planning-chip">${formatNumber(totalQty)} adet toplam</span>
+            </div>
+            ${drawer}
+        </div>
+    `;
+}
+
 function renderTaskCard(task) {
     const id = Number(task.No || 0);
     const amount = parseInt(task.Adet, 10) || 0;
@@ -1764,7 +2035,8 @@ function renderTaskCard(task) {
     const state = planningTaskState(task, amount, pending);
     const canIncrease = !approved;
     const canDecrease = amount > 0;
-    const dependencyButton = pending > 0
+    const waitReason = String(task.BeklemeNedeni || task.WaitReason || '').trim();
+    const dependencyButton = (pending > 0 || planningTaskHasShortage(task) || waitReason !== '')
         ? `<button class="planning-icon-btn is-info" type="button" onclick="openPlanningDependencyInfo(${id})" title="Bekleme detayını gör">
                 <i class="bi bi-info-circle"></i>
             </button>`
@@ -1782,6 +2054,7 @@ function renderTaskCard(task) {
             <div class="planning-task-status">
                 <i class="bi ${state.icon}"></i>${escapeHtml(state.label)}
             </div>
+            ${waitReason ? `<div class="planning-task-wait-reason">${escapeHtml(waitReason)}</div>` : ''}
             <div class="planning-task-actions">
                 ${dependencyButton}
                 <button class="planning-icon-btn is-transfer" type="button" onclick="openTransferModal(${id})" title="Başka personele aktar">
@@ -1810,6 +2083,14 @@ function planningTaskState(task, amount, pending) {
             className: 'is-active',
             icon: 'bi-play-circle',
             label: 'Üretimde',
+        };
+    }
+
+    if (planningTaskHasShortage(task)) {
+        return {
+            className: 'is-blocked',
+            icon: 'bi-exclamation-triangle',
+            label: task.ButonMetni || task.Durum || 'Alt parça stoğu yetersiz',
         };
     }
 
@@ -1853,6 +2134,7 @@ function buildPlanningDependencyInfoHtml(data) {
     const shortageHtml = shortages.map((shortage) => {
         const componentNo = Number(shortage.component_no || 0);
         const suppliers = Array.isArray(shortage.suppliers) ? shortage.suppliers : [];
+        const relatedSuppliers = Array.isArray(shortage.related_suppliers) ? shortage.related_suppliers : [];
         const poolRows = Array.isArray(shortage.pool) ? shortage.pool : [];
         const supplierHtml = suppliers.length
             ? suppliers.map((supplier) => {
@@ -1878,7 +2160,29 @@ function buildPlanningDependencyInfoHtml(data) {
                     </div>
                 `;
             }).join('')
-            : '<div class="planning-dependency-empty">Bu parça için personelde açık üretim bulunamadı.</div>';
+            : '<div class="planning-dependency-empty">Bu siparişe bağlı personelde açık üretim bulunamadı.</div>';
+
+        const relatedHtml = relatedSuppliers.length
+            ? `
+                <h4>Aynı parçadan başka açık üretim</h4>
+                ${relatedSuppliers.map((supplier) => {
+                    const expectedQuantity = Number(supplier.expected_quantity || 0);
+                    return `
+                        <div class="planning-dependency-person">
+                            <div class="planning-dependency-person-head">
+                                <div>
+                                    <strong>${escapeHtml(supplier.personnel_name || 'Personel')}</strong>
+                                    <small>${escapeHtml(supplier.department_name || supplier.status || 'Açık görev')}</small>
+                                </div>
+                                <span class="soft-badge warning">${formatNumber(expectedQuantity > 0 ? expectedQuantity : Number(supplier.open_quantity || 0))} adet</span>
+                            </div>
+                            <p>${escapeHtml(supplier.status || 'Açık görev')} · Açık: ${formatNumber(supplier.open_quantity)} · Hazır: ${formatNumber(supplier.ready_quantity)} · Bekleyen: ${formatNumber(supplier.waiting_quantity)}</p>
+                            <p>${escapeHtml(supplier.relation_label || 'Başka sipariş/iz')}</p>
+                        </div>
+                    `;
+                }).join('')}
+            `
+            : '';
 
         const poolHtml = poolRows.length
             ? `<div class="planning-dependency-empty">Havuzda atama bekleyen ${formatNumber(poolRows.reduce((sum, row) => sum + Number(row.open_quantity || 0), 0))} adet açık iş var.</div>`
@@ -1895,6 +2199,7 @@ function buildPlanningDependencyInfoHtml(data) {
                 </div>
                 <h4>Kimden gelecek?</h4>
                 ${supplierHtml}
+                ${relatedHtml}
                 ${poolHtml}
             </div>
         `;
@@ -2991,6 +3296,7 @@ function renderMultiBoard(personnelGroups) {
             const totalQty = parseInt(task.Adet, 10);
             const state = planningTaskState(task, totalQty, parseInt(task.BekleyenAdet, 10));
             const id = parseInt(task.No);
+            const waitReason = String(task.BeklemeNedeni || task.WaitReason || '').trim();
             
             return `
                 <div class="planning-task-card ${state.className} ${isLate ? 'is-late' : ''}" draggable="true" data-task-id="${id}">
@@ -3003,8 +3309,9 @@ function renderMultiBoard(personnelGroups) {
                         <strong>Adet:</strong> ${formatNumber(totalQty)}
                     </div>
                     <div class="planning-task-status mt-2">
-                        <i class="bi ${state.icon}"></i> ${state.label}
+                        <i class="bi ${state.icon}"></i> ${escapeHtml(state.label)}
                     </div>
+                    ${waitReason ? `<div class="planning-task-wait-reason">${escapeHtml(waitReason)}</div>` : ''}
                 </div>
             `;
         }).join('');

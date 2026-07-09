@@ -34,11 +34,11 @@ fetch('/api/panel/completed-tasks')
 
         body.innerHTML = tasks.map(task => `
             <tr>
-                <td>${task.No}</td>
-                <td>${task.AraUrunAdi || task.UrunAdi || '-'}</td>
-                <td>${task.BolumAdi || '-'}</td>
-                <td>${task.Adet ?? 0}</td>
-                <td>${task.GorevBaslamaTarihi || '-'}</td>
+                <td>${escapeHtml(task.No)}</td>
+                <td>${escapeHtml(task.AraUrunAdi || task.UrunAdi || '-')}</td>
+                <td>${escapeHtml(task.BolumAdi || '-')}</td>
+                <td>${toInt(task.ToplamAdet ?? task.Adet)}</td>
+                <td>${escapeHtml(task.GorevBitisTarihi || task.GorevBaslamaTarihi || '-')}</td>
             </tr>
         `).join('');
     })

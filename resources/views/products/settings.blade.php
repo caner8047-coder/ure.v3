@@ -9,8 +9,8 @@
     <button type="button" class="btn btn-outline-secondary" onclick="exportToExcel()">
         <i class="bi bi-file-earmark-excel me-1"></i>Excel Aktar
     </button>
-    <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('fileImport').click()">
-        <i class="bi bi-upload me-1"></i>Iceri Aktar
+    <button type="button" class="btn btn-outline-secondary" onclick="openProductSettingsImport()">
+        <i class="bi bi-upload me-1"></i>İçeri Aktar
     </button>
     <input type="file" id="fileImport" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importFromExcel(this)" />
 @endsection
@@ -570,6 +570,12 @@
         fetchInitialData();
     });
 
+    function openProductSettingsImport() {
+        const input = document.getElementById('fileImport');
+        input.value = '';
+        input.click();
+    }
+
     // ── Ürün Listesini Yükle ──
     async function fetchInitialData() {
         try {
@@ -811,6 +817,11 @@
 
     // ── Excel Dışa Aktar ──
     function exportToExcel() {
+        if (typeof XLSX === 'undefined') {
+            Swal.fire('Hata', 'Excel dışa aktarma kütüphanesi yüklenemedi. Sayfayı yenileyip tekrar deneyin.', 'error');
+            return;
+        }
+
         if (!currentData || currentData.length === 0) {
             Swal.fire('Uyarı', 'Tablo henüz yüklenmedi.', 'warning');
             return;
@@ -854,6 +865,12 @@
     // ── Excel İçe Aktar ──
     function importFromExcel(input) {
         if (!input.files || !input.files[0]) return;
+        if (typeof XLSX === 'undefined') {
+            Swal.fire('Hata', 'Excel okuma kütüphanesi yüklenemedi. Sayfayı yenileyip tekrar deneyin.', 'error');
+            input.value = '';
+            return;
+        }
+
         if (!currentData || currentData.length === 0) {
             Swal.fire('Uyarı', 'Önce bir ürün seçin.', 'warning');
             input.value = '';

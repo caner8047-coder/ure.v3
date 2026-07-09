@@ -41,6 +41,29 @@ class WorkOrderCenterController extends Controller
         ]);
     }
 
+    public function orders(Request $request)
+    {
+        if (!$this->isCenterReady()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Is Emri Merkezi tabloları henüz olusturulmamis.',
+            ], 503);
+        }
+
+        $orders = $this->queryService->orders($request->all());
+
+        return response()->json([
+            'success' => true,
+            'data' => $orders->items(),
+            'meta' => [
+                'current_page' => $orders->currentPage(),
+                'last_page' => $orders->lastPage(),
+                'per_page' => $orders->perPage(),
+                'total' => $orders->total(),
+            ],
+        ]);
+    }
+
     public function entity(Request $request, string $type, int $id)
     {
         if (!$this->isCenterReady()) {

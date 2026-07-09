@@ -15,6 +15,10 @@
     .workorder-form-grid .span-2 { grid-column: span 2; }
     .workorder-result-panel { display: none; }
     .workorder-result-panel.is-visible { display: block; }
+    .stock-mode-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .stock-mode-option { border: 1px solid var(--z-border); background: var(--z-bg-card); border-radius: 8px; padding: 9px 10px; text-align: left; font-weight: 800; color: var(--z-text); display: grid; gap: 2px; cursor: pointer; }
+    .stock-mode-option span { color: var(--z-text-muted); font-size: 0.68rem; font-weight: 700; line-height: 1.25; }
+    .stock-mode-option.active { border-color: var(--z-accent); background: var(--z-accent-soft); color: var(--z-accent-hover); }
     @media (max-width: 720px) { .workorder-form-grid { grid-template-columns: 1fr; } .workorder-form-grid .span-2 { grid-column: span 1; } }
 </style>
 @endpush
@@ -50,10 +54,17 @@
             </div>
             <div>
                 <label class="form-label" for="stokDurum">Stok durumu</label>
-                <select id="stokDurum" class="form-select">
-                    <option value="StokDahil">Stoktan dus</option>
-                    <option value="StokHaric">Stoka dokunma</option>
-                </select>
+                <input type="hidden" id="stokDurum" value="StokDahil">
+                <div class="stock-mode-toggle" role="group" aria-label="Stok durumu">
+                    <button type="button" class="stock-mode-option active" data-stock-mode="StokDahil" onclick="setStockMode('StokDahil')">
+                        Stok Dahil
+	                        <span>Her BOM satırı kendi boş stoğuyla değerlendirilir; üst parça altı kapatmaz.</span>
+                    </button>
+                    <button type="button" class="stock-mode-option" data-stock-mode="StokHaric" onclick="setStockMode('StokHaric')">
+                        Stok Hariç
+	                        <span>Stoka dokunmadan BOM ihtiyacı kadar üretim açılır.</span>
+                    </button>
+                </div>
             </div>
             <div class="span-2">
                 <label class="form-label" for="aciklamaInput">Aciklama</label>
@@ -83,6 +94,8 @@
     <span id="summaryStockMeta" style="display:none;">Stoktan dus</span>
     <span id="summaryNoteMeta" style="display:none;">Bos</span>
     <span id="summaryAdetCard" style="display:none;">1</span>
+
+    @include('components.work-order-bom-preview')
 @endsection
 
 @push('scripts')
@@ -137,9 +150,17 @@ function updateWorkOrderSummary() {
     document.getElementById('summaryAdetCard').textContent = adet;
 }
 
-function resetWorkOrderForm() { document.getElementById('turSelect').value = 'Nihai'; document.getElementById('adetInput').value = '1'; document.getElementById('aciklamaInput').value = ''; document.getElementById('stokDurum').value = 'StokDahil'; renderUrunOptions(); }
+function setStockMode(mode) {
+    document.getElementById('stokDurum').value = mode === 'StokHaric' ? 'StokHaric' : 'StokDahil';
+    document.querySelectorAll('.stock-mode-option').forEach((button) => {
+        button.classList.toggle('active', button.dataset.stockMode === document.getElementById('stokDurum').value);
+    });
+    updateWorkOrderSummary();
+}
 
-function isEmriVer() {
+function resetWorkOrderForm() { document.getElementById('turSelect').value = 'Nihai'; document.getElementById('adetInput').value = '1'; document.getElementById('aciklamaInput').value = ''; setStockMode('StokDahil'); renderUrunOptions(); }
+
+async function isEmriVer() {
     const tur = document.getElementById('turSelect').value;
     const urunNo = document.getElementById('urunSelect').value;
     const adet = parseInt(document.getElementById('adetInput').value, 10);
@@ -147,16 +168,29 @@ function isEmriVer() {
     const stokDurum = document.getElementById('stokDurum').value;
     if (!urunNo) { Swal.fire({ icon: 'warning', title: 'Urun secin', text: 'Devam etmek icin once urun secimi yapin.' }); return; }
     if (adet < 1) { Swal.fire({ icon: 'warning', title: 'Gecersiz adet', text: 'Adet 0\'dan buyuk olmali.' }); return; }
-    Swal.fire({ icon: 'question', title: 'Is emri olusturulsun mu?', text: `${adet} adet icin manuel is emri acilacak.`, showCancelButton: true, confirmButtonText: 'Evet, olustur', cancelButtonText: 'Iptal', confirmButtonColor: '#0d9488' }).then((result) => {
-        if (!result.isConfirmed) return;
-        fetch('/SiparisApi.ashx?action=createManualWorkOrder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urunNo: parseInt(urunNo, 10), adet, aciklama, stokDurum, tur }) })
-            .then((r) => r.json()).then((data) => {
-                const card = document.getElementById('resultCard'); const body = document.getElementById('resultBody'); const chip = document.getElementById('resultStateChip');
-                card.classList.add('is-visible');
-                if (data.success) { chip.textContent = 'Basarili'; chip.className = 'soft-badge success'; body.innerHTML = `<div class="alert alert-success mb-0">${escapeHtml(data.message || 'Is emri verildi.')}</div>`; document.getElementById('summaryResultInline').textContent = 'Basarili'; Swal.fire({ icon: 'success', title: 'Is emri verildi', text: data.message || 'Kayit tamamlandi.', confirmButtonColor: '#0d9488' }); }
-                else { chip.textContent = 'Hata'; chip.className = 'soft-badge warning'; body.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.message || 'Islem basarisiz.')}</div>`; document.getElementById('summaryResultInline').textContent = 'Hata'; Swal.fire({ icon: 'error', title: 'Islem basarisiz', text: data.message || 'Beklenmeyen hata.' }); }
-            }).catch((e) => Swal.fire({ icon: 'error', title: 'Sunucu hatasi', text: e.message }));
+    const confirmed = await window.workOrderBomPreviewConfirm({
+        mode: 'manual',
+        urunNo: parseInt(urunNo, 10),
+        adet,
+        stokDurum,
+        tur
+    }, {
+        title: 'Is emri olusturulsun mu?',
+        text: `${adet} adet icin manuel is emri acilacak.`,
+        confirmButtonText: 'Evet, olustur',
+        cancelButtonText: 'Iptal',
+        previewConfirmText: 'Onayla ve olustur',
+        confirmButtonColor: '#0d9488'
     });
+    if (!confirmed) return;
+
+    fetch('/SiparisApi.ashx?action=createManualWorkOrder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urunNo: parseInt(urunNo, 10), adet, aciklama, stokDurum, tur }) })
+        .then((r) => r.json()).then((data) => {
+            const card = document.getElementById('resultCard'); const body = document.getElementById('resultBody'); const chip = document.getElementById('resultStateChip');
+            card.classList.add('is-visible');
+            if (data.success) { chip.textContent = 'Basarili'; chip.className = 'soft-badge success'; body.innerHTML = `<div class="alert alert-success mb-0">${escapeHtml(data.message || 'Is emri verildi.')}</div>`; document.getElementById('summaryResultInline').textContent = 'Basarili'; Swal.fire({ icon: 'success', title: 'Is emri verildi', text: data.message || 'Kayit tamamlandi.', confirmButtonColor: '#0d9488' }); }
+            else { chip.textContent = 'Hata'; chip.className = 'soft-badge warning'; body.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.message || 'Islem basarisiz.')}</div>`; document.getElementById('summaryResultInline').textContent = 'Hata'; Swal.fire({ icon: 'error', title: 'Islem basarisiz', text: data.message || 'Beklenmeyen hata.' }); }
+        }).catch((e) => Swal.fire({ icon: 'error', title: 'Sunucu hatasi', text: e.message }));
 }
 
 function escapeHtml(v) { if (v === null || v === undefined) return ''; return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;'); }

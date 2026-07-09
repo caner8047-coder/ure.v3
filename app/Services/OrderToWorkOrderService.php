@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * İş Emri Oluşturma Servisi — Legacy tablolar kullanır.
@@ -24,12 +25,13 @@ class OrderToWorkOrderService
      * @param array $satirNolar tbSiparisSatir.No listesi
      * @param int $surplus Stok ilavesi (ek üretim adedi)
      */
-    public function createOrderWorkOrders(array $satirNolar, int $surplus = 0, string $tur = 'Nihai', $altBilesenNo = null): array
+    public function createOrderWorkOrders(array $satirNolar, int $surplus = 0, string $tur = 'Nihai', $altBilesenNo = null, string $stokDurum = 'StokDahil'): array
     {
         if (empty($satirNolar)) {
             return ['success' => false, 'message' => 'Satir numarasi bulunamadi.'];
         }
 
+        $stokDurum = in_array($stokDurum, ['StokDahil', 'StokHaric'], true) ? $stokDurum : 'StokDahil';
         $isBulkRequest = count($satirNolar) > 1;
         $created = 0;
         $failed = 0;
@@ -103,6 +105,23 @@ class OrderToWorkOrderService
 
                 $eslesenUrunNo = intval($item->EslesenUrunNo ?? 0);
                 $eslesenUrunTur = $item->EslesenUrunTur ?? '';
+                if ($eslesenUrunNo <= 0 && Schema::hasTable('tbUrunEslestirmeOnbellek')) {
+                    $cachedMatch = DB::table('tbUrunEslestirmeOnbellek')
+                        ->where('ExcelUrunAdi', $item->UrunAdi)
+                        ->first(['EslesenUrunNo', 'EslesenUrunTur']);
+
+                    if ($cachedMatch && intval($cachedMatch->EslesenUrunNo ?? 0) > 0) {
+                        $eslesenUrunNo = intval($cachedMatch->EslesenUrunNo);
+                        $eslesenUrunTur = (string) ($cachedMatch->EslesenUrunTur ?? '');
+
+                        DB::table('tbSiparisSatir')->where('No', $satirNo)->update([
+                            'EslesenUrunNo' => $eslesenUrunNo,
+                            'EslesenUrunTur' => $eslesenUrunTur,
+                            'EslesmeYontemi' => 'Onbellek',
+                        ]);
+                        $item = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
+                    }
+                }
 
                 if ($eslesenUrunNo <= 0) {
                     $failed++;
@@ -110,7 +129,6 @@ class OrderToWorkOrderService
                     continue;
                 }
 
-                $stokDurum = 'StokDahil';
                 $traceContext = [
                     'siparisSatirNo' => intval($item->No ?? 0),
                     'siparisNo' => (string) ($item->SiparisNo ?? ''),
@@ -126,7 +144,7 @@ class OrderToWorkOrderService
                         $hedefNo,
                         $tur === 'HamMadde' ? 'Ham Madde' : 'Ara Mamül',
                         intval($item->Adet),
-                        $tur === 'HamMadde' ? 'StokHaric' : $stokDurum,
+                        $stokDurum,
                         '',
                         $traceContext
                     );
@@ -156,13 +174,20 @@ class OrderToWorkOrderService
                 $tamponDusumleri = $result['tamponDusumleri'] ?? [];
                 $gorevNo = intval($result['gorevNo'] ?? 0);
                 $sistemUrunAdi = $result['sistemUrunAdi'] ?? '';
+                $fullyCoveredByStock = (bool) ($result['fullyCoveredByStock'] ?? false);
 
-                if ($gorevNo > 0) {
+                if ($gorevNo > 0 || $fullyCoveredByStock) {
+                    $this->attachWorkOrderNoToStockReservations(
+                        intval($satirNo),
+                        (string) ($item->SiparisNo ?? ''),
+                        $gorevNo
+                    );
+
                     // Sipariş satırını güncelle
                     $tamponJson = !empty($tamponDusumleri) ? json_encode($tamponDusumleri) : null;
                     DB::table('tbSiparisSatir')->where('No', $satirNo)->update([
                         'Durum' => 'IsEmriVerildi',
-                        'GorevNo' => $gorevNo,
+                        'GorevNo' => $gorevNo > 0 ? $gorevNo : null,
                         'IsEmriTarihi' => now(),
                         'TamponDusumleri' => $tamponJson,
                     ]);
@@ -175,18 +200,21 @@ class OrderToWorkOrderService
                         $eslesenUrunNo, $eslesenUrunTur, $item->KargoSonTeslim
                     );
 
-                    $this->logCreatedWorkOrderEvent(
-                        $beforeItem,
-                        DB::table('tbSiparisSatir')->where('No', $satirNo)->first(),
-                        $gorevNo,
-                        $isBulkRequest,
-                        [
-                            'tur' => $tur,
-                            'alt_bilesen_no' => $altBilesenNo ? intval($altBilesenNo) : null,
-                            'surplus' => $surplus,
-                            'sistem_urun_adi' => $sistemUrunAdi,
-                        ]
-                    );
+                    if ($gorevNo > 0) {
+                        $this->logCreatedWorkOrderEvent(
+                            $beforeItem,
+                            DB::table('tbSiparisSatir')->where('No', $satirNo)->first(),
+                            $gorevNo,
+                            $isBulkRequest,
+                            [
+                                'tur' => $tur,
+                                'alt_bilesen_no' => $altBilesenNo ? intval($altBilesenNo) : null,
+                                'surplus' => $surplus,
+                                'stok_durum' => $stokDurum,
+                                'sistem_urun_adi' => $sistemUrunAdi,
+                            ]
+                        );
+                    }
 
                     $created++;
                 } else {
@@ -210,6 +238,31 @@ class OrderToWorkOrderService
             DB::rollBack();
             return ['success' => false, 'message' => 'Hata: ' . $ex->getMessage()];
         }
+    }
+
+    private function attachWorkOrderNoToStockReservations(int $orderItemNo, string $orderNo, int $workOrderNo): void
+    {
+        if ($workOrderNo <= 0 || !Schema::hasTable('stock_movements')) {
+            return;
+        }
+        $orderNo = trim($orderNo);
+        if ($orderItemNo <= 0 && $orderNo === '') {
+            return;
+        }
+
+        DB::table('stock_movements')
+            ->where('movement_type', 'work_order_buffer_reserved')
+            ->whereNull('work_order_no')
+            ->where(function ($query) use ($orderItemNo, $orderNo) {
+                if ($orderItemNo > 0) {
+                    $query->orWhere('order_item_no', $orderItemNo);
+                }
+
+                if ($orderNo !== '') {
+                    $query->orWhere('order_no', $orderNo);
+                }
+            })
+            ->update(['work_order_no' => $workOrderNo]);
     }
 
     private function logCreatedWorkOrderEvent(

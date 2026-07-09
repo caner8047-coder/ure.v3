@@ -87,6 +87,6 @@ class Personnel extends Authenticatable
 
     public function isAdmin(): bool
     {
-        return (int) ($this->BolumAdiNo ?? 0) === 0;
+        return $this->BolumAdiNo !== null && (int) $this->BolumAdiNo === 0;
     }
 }

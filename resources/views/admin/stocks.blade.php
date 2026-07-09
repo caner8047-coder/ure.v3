@@ -20,8 +20,8 @@
                     <th>Bölüm</th>
                     <th>Ara Ürün</th>
                     <th>Fiziki Stok</th>
-                    <th>Tampon (Rezerve)</th>
-                    <th>Kullanılabilir</th>
+                    <th>Görevdeki (Ayrılmış)</th>
+                    <th>Boşta (Tampon)</th>
                     <th>İşlem</th>
                 </tr>
             </thead>
@@ -42,15 +42,17 @@ function loadAdminStocks() {
             let rows = data.data || [];
             let html = '';
             rows.forEach(s => {
-                let kull = Math.max(0, (s.Adet || 0) - (s.TamponMiktar || 0));
-                let cls = kull > 0 ? 'text-success' : 'text-danger';
+                let adet = Number(s.Adet || 0);
+                let bosta = Math.max(0, Math.min(adet, Number(s.TamponMiktar || 0)));
+                let gorevdeki = Math.max(0, adet - bosta);
+                let cls = bosta > 0 ? 'text-success' : 'text-danger';
                 html += '<tr>'
                     + '<td>' + s.No + '</td>'
                     + '<td>' + (s.BolumAdi || '-') + '</td>'
                     + '<td>' + (s.AraUrunAdi || '-') + '</td>'
-                    + '<td><strong>' + (s.Adet || 0) + '</strong></td>'
-                    + '<td>' + (s.TamponMiktar || 0) + '</td>'
-                    + '<td class="' + cls + '"><strong>' + kull + '</strong></td>'
+                    + '<td><strong>' + adet + '</strong></td>'
+                    + '<td>' + gorevdeki + '</td>'
+                    + '<td class="' + cls + '"><strong>' + bosta + '</strong></td>'
                     + '<td><button class="btn btn-sm btn-outline-primary" onclick="editAdminStock(' + s.No + ',' + (s.Adet||0) + ',' + (s.TamponMiktar||0) + ')"><i class="bi bi-pencil"></i></button></td>'
                     + '</tr>';
             });
@@ -61,12 +63,15 @@ function loadAdminStocks() {
 function editAdminStock(no, adet, tampon) {
     let newAdet = prompt('Yeni Adet:', adet);
     if (newAdet === null) return;
-    let newTampon = prompt('Yeni Tampon:', tampon);
+    const reserved = Math.max(0, parseInt(adet || 0, 10) - Math.max(0, Math.min(parseInt(adet || 0, 10), parseInt(tampon || 0, 10))));
+    const suggestedTampon = Math.max(0, parseInt(newAdet || 0, 10) - reserved);
+    let newTampon = prompt('Yeni Boşta/Tampon:', suggestedTampon);
     if (newTampon === null) return;
+    const preserveReserved = parseInt(newTampon || 0, 10) === suggestedTampon;
     fetch('/api/stocks/' + no, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content},
-        body: JSON.stringify({Adet: parseInt(newAdet), TamponMiktar: parseInt(newTampon)})
+        body: JSON.stringify({Adet: parseInt(newAdet), TamponMiktar: parseInt(newTampon), preserve_reserved: preserveReserved})
     }).then(r => r.json()).then(d => { if (d.success) loadAdminStocks(); else alert('Hata!'); });
 }
 

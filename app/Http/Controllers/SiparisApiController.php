@@ -18,6 +18,8 @@ use App\Services\StockMovementLogger;
 
 class SiparisApiController extends Controller
 {
+    private const GIED_ALLOCATION_TABLE = 'tbSiparisOzelUretimRezervasyon';
+
     private const MUTATING_ACTIONS = [
         'uploadOrders',
         'matchProduct',
@@ -559,26 +561,7 @@ class SiparisApiController extends Controller
             // ─── Özel Üretim ise bağlı sipariş bilgisi ekle ───
             if ($ozelUretim === '1') {
                 foreach ($orders as &$ord) {
-                    $bagliRows = DB::table('tbSiparisSatir')
-                        ->where('BagliOlduguOzelUretimNo', $ord['no'])
-                        ->where('Aktif', 1)
-                        ->where('Durum', '!=', 'Pasif')
-                        ->select(
-                            'No',
-                            'SiparisNo',
-                            'Pazaryeri',
-                            'Magaza',
-                            'Musteri',
-                            'UrunAdi',
-                            'Adet',
-                            'Durum',
-                            'SiparisTarihi',
-                            'KargoSonTeslim',
-                            'GuncellemeTarihi',
-                            'GorevNo'
-                        )
-                        ->orderBy('SiparisTarihi')
-                        ->get();
+                    $bagliRows = $this->specialProductionLinkedOrderRows((int) $ord['no']);
 
                     $giedDates = collect();
                     $bagliNos = $bagliRows->pluck('No')->map(fn ($no) => (int) $no)->filter()->values();
@@ -604,7 +587,8 @@ class SiparisApiController extends Controller
                             'magaza' => (string) ($b->Magaza ?? ''),
                             'musteri' => (string) ($b->Musteri ?? ''),
                             'urunAdi' => (string) ($b->UrunAdi ?? ''),
-                            'adet' => (int) $b->Adet,
+                            'adet' => (int) ($b->RezervasyonAdet ?? $b->Adet ?? 0),
+                            'siparisAdet' => (int) ($b->SiparisAdet ?? $b->Adet ?? 0),
                             'durum' => (string) ($b->Durum ?? ''),
                             'siparisTarihi' => $this->formatLegacyDateTime($b->SiparisTarihi ?? null),
                             'kargoSonTeslim' => $this->formatLegacyDateTime($b->KargoSonTeslim ?? null),
@@ -613,7 +597,7 @@ class SiparisApiController extends Controller
                             'giedKaynak' => $eventGiedTarihi ? 'GİED' : 'Son güncelleme',
                             'gorevNo' => (int) ($b->GorevNo ?? 0),
                         ];
-                        $reserveAdet += (int) $b->Adet;
+                        $reserveAdet += (int) ($b->RezervasyonAdet ?? $b->Adet ?? 0);
                     }
                     $ord['bagliSiparisler'] = $bagliList;
                     $bostaKalan = intval($ord['adet'] ?? 0) - $reserveAdet;
@@ -2008,20 +1992,22 @@ class SiparisApiController extends Controller
                 throw new \Exception('GİED için ürün ve adet bilgisi zorunludur.');
             }
 
-            $results = DB::select("
-                SELECT sp.No, sp.SiparisNo, sp.UrunAdi, sp.Adet AS ToplamAdet,
-                    IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum NOT IN ('Pasif', 'StokKarsilandi')), 0) AS RezerveAdet,
-                    sp.Durum, sp.IsEmriTarihi, sp.GorevNo
-                FROM tbSiparisSatir sp
-                WHERE sp.Aktif = 1 AND sp.Musteri LIKE 'ÖZEL ÜRETİM%'
-                    AND sp.EslesenUrunNo = ? AND sp.EslesenUrunTur = ?
-                    AND sp.Durum NOT IN ('Pasif', 'StokKarsilandi')
-                    AND (IFNULL(sp.GorevNo, 0) > 0 OR sp.Durum IN ('IsEmriVerildi', 'PasifDevamEden', 'UretimdenKarsilaniyor'))
-                    AND (sp.Adet - IFNULL((SELECT SUM(Adet) FROM tbSiparisSatir WHERE BagliOlduguOzelUretimNo = sp.No AND Aktif=1 AND Durum NOT IN ('Pasif', 'StokKarsilandi')), 0)) >= ?
-                ORDER BY COALESCE(sp.IsEmriTarihi, sp.GuncellemeTarihi, sp.YuklemeTarihi) ASC, sp.No ASC
-            ", [$eslesenUrunNo, $eslesenUrunTur, $istenenAdet]);
+            $capacity = $this->buildSpecialProductionAllocationPlan($eslesenUrunNo, $eslesenUrunTur, $istenenAdet);
+            if (intval($capacity['total_available'] ?? 0) < $istenenAdet) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'totalAvailable' => intval($capacity['total_available'] ?? 0),
+                    'requested' => $istenenAdet,
+                ]);
+            }
 
-            $data = collect($results)->map(function ($row) {
+            $plannedQuantities = collect($capacity['allocations'] ?? [])
+                ->mapWithKeys(fn ($allocation) => [intval($allocation['special_production_no'] ?? 0) => intval($allocation['quantity'] ?? 0)]);
+
+            $data = collect($capacity['rows'] ?? [])->filter(function ($row) {
+                return intval($row->BostaAdet ?? 0) > 0;
+            })->map(function ($row) use ($plannedQuantities) {
                 $isEmriTarihi = $row->IsEmriTarihi ?? null;
                 if ($isEmriTarihi) {
                     try {
@@ -2034,21 +2020,35 @@ class SiparisApiController extends Controller
                 $toplamAdet = intval($row->ToplamAdet ?? 0);
                 $rezerveAdet = intval($row->RezerveAdet ?? 0);
                 $bostaAdet = max(0, $toplamAdet - $rezerveAdet);
+                $no = intval($row->No ?? 0);
+                $ayrilacakAdet = intval($plannedQuantities[$no] ?? 0);
 
                 return [
-                    'no' => intval($row->No ?? 0),
+                    'No' => $no,
+                    'no' => $no,
                     'siparisNo' => (string) ($row->SiparisNo ?? ''),
                     'urunAdi' => (string) ($row->UrunAdi ?? ''),
+                    'ToplamAdet' => $toplamAdet,
                     'toplamAdet' => $toplamAdet,
+                    'RezerveAdet' => $rezerveAdet,
                     'rezerveAdet' => $rezerveAdet,
+                    'BostaAdet' => $bostaAdet,
                     'bostaAdet' => $bostaAdet,
+                    'ayrilacakAdet' => $ayrilacakAdet,
                     'durum' => (string) ($row->Durum ?? ''),
                     'isEmriTarihi' => $isEmriTarihi ?: '',
                     'gorevNo' => intval($row->GorevNo ?? 0),
                 ];
             });
 
-            return response()->json(['success' => true, 'data' => $data]);
+            return response()->json([
+                'success' => true,
+                'data' => $data->values(),
+                'requested' => $istenenAdet,
+                'totalAvailable' => intval($capacity['total_available'] ?? 0),
+                'splitRequired' => count($capacity['allocations'] ?? []) > 1,
+                'allocationPlan' => $capacity['allocations'] ?? [],
+            ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()]);
         }
@@ -2138,35 +2138,50 @@ class SiparisApiController extends Controller
                     throw new \Exception('Henüz üretim bandına alınmamış özel üretime rezervasyon bağlanamaz.');
                 }
 
-                $rezerveAdet = intval(
-                    DB::table('tbSiparisSatir')
-                        ->where('BagliOlduguOzelUretimNo', $ozelUretimNo)
-                        ->where('Aktif', 1)
-                        ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
-                        ->sum('Adet')
+                $allocationPlan = $this->buildSpecialProductionAllocationPlan(
+                    intval($order->EslesenUrunNo ?? 0),
+                    (string) ($order->EslesenUrunTur ?? ''),
+                    intval($order->Adet ?? 0),
+                    $ozelUretimNo,
+                    true,
+                    true
                 );
-                $bostaAdet = intval($specialProduction->Adet ?? 0) - $rezerveAdet;
-                if ($bostaAdet < intval($order->Adet)) {
-                    throw new \Exception("Özel üretimin boşta kalan kapasitesi yetersiz! (Boşta: {$bostaAdet}, İstenen: {$order->Adet})");
+                $allocations = $allocationPlan['allocations'] ?? [];
+                if (intval($allocationPlan['total_available'] ?? 0) < intval($order->Adet ?? 0) || empty($allocations)) {
+                    throw new \Exception("Özel üretimlerin toplam boş kapasitesi yetersiz! (Boşta: " . intval($allocationPlan['total_available'] ?? 0) . ", İstenen: {$order->Adet})");
+                }
+                if (count($allocations) > 1 && !$this->supportsSplitGiedAllocations()) {
+                    throw new \Exception('Bu sipariş birden fazla özel üretimden karşılanmalı; bunun için GİED paylaştırma tablosu kurulmalı.');
                 }
 
+                $primarySpecialProductionNo = intval($allocations[0]['special_production_no'] ?? $ozelUretimNo);
+
                 DB::table('tbSiparisSatir')->where('No', $siparisNo)->update([
-                    'BagliOlduguOzelUretimNo' => $ozelUretimNo,
+                    'BagliOlduguOzelUretimNo' => $primarySpecialProductionNo,
                     'Durum' => 'UretimdenKarsilaniyor',
                     'GuncellemeTarihi' => now(),
                 ]);
+                $this->replaceGiedAllocations($siparisNo, $allocations);
 
                 return [
                     'before' => $order,
                     'after' => DB::table('tbSiparisSatir')->where('No', $siparisNo)->first(),
-                    'special_production_no' => $ozelUretimNo,
+                    'special_production_no' => $primarySpecialProductionNo,
+                    'allocations' => $allocations,
                     'should_log' => true,
-                    'message' => 'Sipariş özel üretime bağlandı!',
+                    'message' => count($allocations) > 1
+                        ? 'Sipariş özel üretimlere paylaştırılarak bağlandı!'
+                        : 'Sipariş özel üretime bağlandı!',
                 ];
             });
 
             if (!empty($eventPayload['should_log'])) {
-                $this->logWipLinkedEvent($eventPayload, $ozelUretimNo);
+                foreach (($eventPayload['allocations'] ?? []) as $allocation) {
+                    $this->logWipLinkedEvent($eventPayload, intval($allocation['special_production_no'] ?? 0));
+                }
+                if (empty($eventPayload['allocations'])) {
+                    $this->logWipLinkedEvent($eventPayload, intval($eventPayload['special_production_no'] ?? $ozelUretimNo));
+                }
             }
 
             return response()->json(['success' => true, 'message' => $eventPayload['message']]);
@@ -2203,13 +2218,19 @@ class SiparisApiController extends Controller
                 try {
                     $eventPayload = $this->linkOrderToFirstAvailableSpecialProduction($satirNo);
                     if (!empty($eventPayload['should_log'])) {
-                        $this->logWipLinkedEvent($eventPayload, intval($eventPayload['special_production_no'] ?? 0));
+                        foreach (($eventPayload['allocations'] ?? []) as $allocation) {
+                            $this->logWipLinkedEvent($eventPayload, intval($allocation['special_production_no'] ?? 0));
+                        }
+                        if (empty($eventPayload['allocations'])) {
+                            $this->logWipLinkedEvent($eventPayload, intval($eventPayload['special_production_no'] ?? 0));
+                        }
                     }
 
                     $basarili++;
                     $baglantilar[] = [
                         'satirNo' => $satirNo,
                         'ozelUretimNo' => intval($eventPayload['special_production_no'] ?? 0),
+                        'dagitim' => $eventPayload['allocations'] ?? [],
                     ];
                 } catch (\Throwable $e) {
                     $hatalar[] = "Satır {$satirNo}: {$e->getMessage()}";
@@ -2268,54 +2289,32 @@ class SiparisApiController extends Controller
                 throw new \Exception('GİED için ürün ve adet bilgisi zorunludur.');
             }
 
-            $specialProductions = DB::table('tbSiparisSatir')
-                ->where('Aktif', 1)
-                ->where('Musteri', 'like', 'ÖZEL ÜRETİM%')
-                ->where('EslesenUrunNo', $eslesenUrunNo)
-                ->where('EslesenUrunTur', $eslesenUrunTur)
-                ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
-                ->where(function ($query) {
-                    $query->whereRaw('IFNULL(GorevNo, 0) > 0')
-                        ->orWhereIn('Durum', ['IsEmriVerildi', 'PasifDevamEden', 'UretimdenKarsilaniyor']);
-                })
-                ->orderByRaw('COALESCE(IsEmriTarihi, GuncellemeTarihi, YuklemeTarihi) ASC')
-                ->orderBy('No')
-                ->lockForUpdate()
-                ->get();
-
-            $selectedSpecialProduction = null;
-            foreach ($specialProductions as $specialProduction) {
-                $rezerveAdet = intval(
-                    DB::table('tbSiparisSatir')
-                        ->where('BagliOlduguOzelUretimNo', $specialProduction->No)
-                        ->where('Aktif', 1)
-                        ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
-                        ->sum('Adet')
-                );
-                $bostaAdet = intval($specialProduction->Adet ?? 0) - $rezerveAdet;
-                if ($bostaAdet >= $adet) {
-                    $selectedSpecialProduction = $specialProduction;
-                    break;
-                }
-            }
-
-            if (!$selectedSpecialProduction) {
+            $allocationPlan = $this->buildSpecialProductionAllocationPlan($eslesenUrunNo, $eslesenUrunTur, $adet, null, false, true);
+            $allocations = $allocationPlan['allocations'] ?? [];
+            if (intval($allocationPlan['total_available'] ?? 0) < $adet || empty($allocations)) {
                 throw new \Exception('Uygun boş kapasiteli özel/stok üretim bulunamadı.');
             }
+            if (count($allocations) > 1 && !$this->supportsSplitGiedAllocations()) {
+                throw new \Exception('Bu sipariş birden fazla özel üretimden karşılanmalı; bunun için GİED paylaştırma tablosu kurulmalı.');
+            }
 
-            $ozelUretimNo = intval($selectedSpecialProduction->No);
+            $ozelUretimNo = intval($allocations[0]['special_production_no'] ?? 0);
             DB::table('tbSiparisSatir')->where('No', $siparisNo)->update([
                 'BagliOlduguOzelUretimNo' => $ozelUretimNo,
                 'Durum' => 'UretimdenKarsilaniyor',
                 'GuncellemeTarihi' => now(),
             ]);
+            $this->replaceGiedAllocations($siparisNo, $allocations);
 
             return [
                 'before' => $order,
                 'after' => DB::table('tbSiparisSatir')->where('No', $siparisNo)->first(),
                 'special_production_no' => $ozelUretimNo,
+                'allocations' => $allocations,
                 'should_log' => true,
-                'message' => 'Sipariş özel üretime bağlandı!',
+                'message' => count($allocations) > 1
+                    ? 'Sipariş özel üretimlere paylaştırılarak bağlandı!'
+                    : 'Sipariş özel üretime bağlandı!',
             ];
         });
     }
@@ -2339,6 +2338,9 @@ class SiparisApiController extends Controller
             'payload_after' => $this->serializeRecord($eventPayload['after'] ?? null),
             'context' => [
                 'special_production_no' => $ozelUretimNo,
+                'allocated_quantity' => collect($eventPayload['allocations'] ?? [])
+                    ->firstWhere('special_production_no', $ozelUretimNo)['quantity'] ?? null,
+                'gied_allocations' => $eventPayload['allocations'] ?? [],
             ],
         ]);
     }
@@ -2358,7 +2360,8 @@ class SiparisApiController extends Controller
                     ->lockForUpdate()
                     ->first();
                 if (!$order) throw new \Exception('Sipariş bulunamadı.');
-                if (empty($order->BagliOlduguOzelUretimNo)) {
+                $activeAllocations = $this->activeGiedAllocationsForOrder($siparisNo);
+                if (empty($order->BagliOlduguOzelUretimNo) && empty($activeAllocations)) {
                     throw new \Exception('Bu siparişin aktif bir GİED rezervasyonu yok.');
                 }
 
@@ -2370,10 +2373,12 @@ class SiparisApiController extends Controller
                     'Durum' => $nextStatus,
                     'GuncellemeTarihi' => now(),
                 ]);
+                $this->clearGiedAllocations($siparisNo);
 
                 return [
                     'before' => $order,
                     'after' => DB::table('tbSiparisSatir')->where('No', $siparisNo)->first(),
+                    'allocations' => $activeAllocations,
                     'message' => $nextStatus === 'StokKarsilandi'
                         ? 'Rezervasyon temizlendi, sipariş stoktan karşılanmış durumda bırakıldı.'
                         : 'Rezervasyon iptal edildi.',
@@ -2399,6 +2404,9 @@ class SiparisApiController extends Controller
                     : 'Siparis yeniden uretim bekliyor durumuna dondu.',
                 'payload_before' => $this->serializeRecord($payload['before']),
                 'payload_after' => $this->serializeRecord($payload['after']),
+                'context' => [
+                    'gied_allocations' => $payload['allocations'] ?? [],
+                ],
             ]);
 
             return response()->json(['success' => true, 'message' => $payload['message']]);
@@ -3275,39 +3283,7 @@ class SiparisApiController extends Controller
      */
     private function restoreTamponFromJson(?string $tamponDusumleriJson): void
     {
-        if (empty($tamponDusumleriJson)) return;
-        try {
-            $dusumleri = json_decode($tamponDusumleriJson, true);
-            if (!is_array($dusumleri)) return;
-            foreach ($dusumleri as $dusum) {
-                $araNo = intval($dusum['araNo'] ?? 0);
-                $adet = intval($dusum['adet'] ?? 0);
-                if ($araNo > 0 && $adet > 0) {
-                    $stockBefore = DB::table('tbBolumAraStok')
-                        ->where('AraUrunAdiNo', $araNo)
-                        ->lockForUpdate()
-                        ->first();
-                    DB::statement("
-                        UPDATE tbBolumAraStok
-                        SET TamponMiktar = CASE WHEN TamponMiktar + ? > Adet THEN Adet ELSE TamponMiktar + ? END
-                        WHERE AraUrunAdiNo = ?
-                    ", [$adet, $adet, $araNo]);
-                    $stockAfter = $stockBefore
-                        ? DB::table('tbBolumAraStok')->where('No', $stockBefore->No)->first()
-                        : null;
-
-                    $this->logStockMovement($stockBefore, $stockAfter, [
-                        'movement_type' => 'work_order_buffer_released',
-                        'source_type' => 'work_order_cancel',
-                        'source_id' => $araNo,
-                        'description' => 'İş emri iptali nedeniyle tampon stok iade edildi.',
-                        'metadata' => [
-                            'released_buffer_quantity' => $adet,
-                        ],
-                    ]);
-                }
-            }
-        } catch (\Exception $e) { /* Log hatası ana işlemi engellemesin */ }
+        app(BomService::class)->restoreTamponFromJson($tamponDusumleriJson);
     }
 
     /**
@@ -3397,6 +3373,7 @@ class SiparisApiController extends Controller
                     return 'Sadece \'Üretim Bekliyor\' veya \'Üretime Bağlandı\' (GİED) durumundaki siparişler stoktan düşülebilir.';
                 }
                 if ($eslesenUrunNo <= 0) return 'Eşleşen ürün bulunamadı.';
+                $activeGiedAllocations = $this->activeGiedAllocationsForOrder($satirNo);
 
                 $araUrunNo = 0;
                 if ($eslesenUrunTur === 'Nihai') {
@@ -3453,6 +3430,7 @@ class SiparisApiController extends Controller
                     'BagliOlduguOzelUretimNo' => null,
                     'GuncellemeTarihi' => now(),
                 ]);
+                $this->clearGiedAllocations($satirNo);
 
                 $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
                 $this->logCenterEvent([
@@ -3475,6 +3453,7 @@ class SiparisApiController extends Controller
                     'context' => [
                         'ara_urun_no' => $araUrunNo,
                         'deducted_amount' => $adet,
+                        'gied_allocations' => $activeGiedAllocations,
                     ],
                 ]);
 
@@ -3534,12 +3513,26 @@ class SiparisApiController extends Controller
 
                 $stockDeductEvent = $this->latestStockDeductedEventForOrder($satirNo, $lastUndoAt);
                 $payloadBefore = $this->decodeJsonPayload(data_get($stockDeductEvent, 'payload_before'));
+                $eventContext = $this->decodeJsonPayload(data_get($stockDeductEvent, 'context'));
+                $previousAllocations = collect($eventContext['gied_allocations'] ?? [])
+                    ->map(function ($allocation) {
+                        return [
+                            'special_production_no' => intval($allocation['special_production_no'] ?? $allocation['ozelUretimNo'] ?? 0),
+                            'quantity' => intval($allocation['quantity'] ?? $allocation['adet'] ?? 0),
+                        ];
+                    })
+                    ->filter(fn ($allocation) => $allocation['special_production_no'] > 0 && $allocation['quantity'] > 0)
+                    ->values()
+                    ->all();
                 $previousStatus = (string) (data_get($stockDeductEvent, 'status_before') ?: ($payloadBefore['Durum'] ?? 'UretimBekliyor'));
                 if (!in_array($previousStatus, ['UretimBekliyor', 'UretimdenKarsilaniyor'], true)) {
                     $previousStatus = 'UretimBekliyor';
                 }
 
                 $previousSpecialNo = intval($payloadBefore['BagliOlduguOzelUretimNo'] ?? data_get($stockDeductEvent, 'special_production_no') ?? 0);
+                if (!empty($previousAllocations)) {
+                    $previousSpecialNo = intval($previousAllocations[0]['special_production_no'] ?? $previousSpecialNo);
+                }
                 $restoredTotal = 0;
 
                 foreach ($movements as $movement) {
@@ -3594,6 +3587,9 @@ class SiparisApiController extends Controller
                     'BagliOlduguOzelUretimNo' => $previousSpecialNo > 0 ? $previousSpecialNo : null,
                     'GuncellemeTarihi' => now(),
                 ]);
+                if (!empty($previousAllocations)) {
+                    $this->replaceGiedAllocations($satirNo, $previousAllocations);
+                }
 
                 $updatedSatir = DB::table('tbSiparisSatir')->where('No', $satirNo)->first();
                 $this->logCenterEvent([
@@ -3619,6 +3615,7 @@ class SiparisApiController extends Controller
                     'context' => [
                         'restored_amount' => $restoredTotal,
                         'reversed_movement_ids' => $movements->pluck('id')->map(fn ($id) => intval($id))->values()->all(),
+                        'gied_allocations' => $previousAllocations,
                     ],
                 ]);
 
@@ -4184,13 +4181,7 @@ class SiparisApiController extends Controller
             ->values()
             ->all();
 
-        $reservedMap = DB::table('tbSiparisSatir')
-            ->whereIn('BagliOlduguOzelUretimNo', $productionNos)
-            ->where('Aktif', 1)
-            ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
-            ->select('BagliOlduguOzelUretimNo', DB::raw('SUM(Adet) as ReservedAdet'))
-            ->groupBy('BagliOlduguOzelUretimNo')
-            ->pluck('ReservedAdet', 'BagliOlduguOzelUretimNo');
+        $reservedMap = $this->specialProductionReservedQuantities($productionNos);
 
         $capacity = [];
         foreach ($productionRows as $row) {
@@ -4256,12 +4247,12 @@ class SiparisApiController extends Controller
                 'sp.YuklemeTarihi',
             ]);
 
-        return $rows->map(function ($row) {
-            $reserved = intval(DB::table('tbSiparisSatir')
-                ->where('BagliOlduguOzelUretimNo', intval($row->No ?? 0))
-                ->where('Aktif', 1)
-                ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi'])
-                ->sum('Adet'));
+        $reservedMap = $this->specialProductionReservedQuantities(
+            $rows->pluck('No')->map(fn ($no) => intval($no))->filter()->values()->all()
+        );
+
+        return $rows->map(function ($row) use ($reservedMap) {
+            $reserved = intval($reservedMap[intval($row->No ?? 0)] ?? 0);
             $total = intval($row->Adet ?? 0);
             $rawDate = $row->IsEmriTarihi ?: ($row->GuncellemeTarihi ?: $row->YuklemeTarihi);
 
@@ -4277,6 +4268,341 @@ class SiparisApiController extends Controller
                 'rawDate' => $rawDate,
             ];
         })->values()->all();
+    }
+
+    private function buildSpecialProductionAllocationPlan(
+        int $eslesenUrunNo,
+        string $eslesenUrunTur,
+        int $requestedQuantity,
+        ?int $preferredSpecialProductionNo = null,
+        bool $requirePreferred = false,
+        bool $lockForUpdate = false
+    ): array {
+        if ($eslesenUrunNo <= 0 || trim($eslesenUrunTur) === '' || $requestedQuantity <= 0) {
+            return ['rows' => collect(), 'allocations' => [], 'total_available' => 0];
+        }
+
+        $query = DB::table('tbSiparisSatir as sp')
+            ->where('sp.Aktif', 1)
+            ->where(function ($query) {
+                $query->where('sp.Musteri', 'like', 'ÖZEL ÜRETİM%')
+                    ->orWhere('sp.Musteri', 'like', 'OZEL URETIM%');
+            })
+            ->where('sp.EslesenUrunNo', $eslesenUrunNo)
+            ->where('sp.EslesenUrunTur', $eslesenUrunTur)
+            ->whereNotIn('sp.Durum', ['Pasif', 'StokKarsilandi'])
+            ->where(function ($query) {
+                $query->whereRaw('IFNULL(sp.GorevNo, 0) > 0')
+                    ->orWhereIn('sp.Durum', ['IsEmriVerildi', 'PasifDevamEden', 'UretimdenKarsilaniyor']);
+            })
+            ->orderByRaw('COALESCE(sp.IsEmriTarihi, sp.GuncellemeTarihi, sp.YuklemeTarihi) ASC')
+            ->orderBy('sp.No');
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $rows = $query->get([
+            'sp.No',
+            'sp.SiparisNo',
+            'sp.UrunAdi',
+            'sp.Adet as ToplamAdet',
+            'sp.Durum',
+            'sp.IsEmriTarihi',
+            'sp.GorevNo',
+        ]);
+
+        if ($rows->isEmpty()) {
+            return ['rows' => collect(), 'allocations' => [], 'total_available' => 0];
+        }
+
+        $productionNos = $rows->pluck('No')->map(fn ($no) => intval($no))->filter()->values()->all();
+        $reservedMap = $this->specialProductionReservedQuantities($productionNos);
+
+        $rows = $rows->map(function ($row) use ($reservedMap) {
+            $total = intval($row->ToplamAdet ?? 0);
+            $reserved = intval($reservedMap[intval($row->No ?? 0)] ?? 0);
+            $row->RezerveAdet = $reserved;
+            $row->BostaAdet = max(0, $total - $reserved);
+
+            return $row;
+        });
+
+        $preferredSpecialProductionNo = intval($preferredSpecialProductionNo ?? 0);
+        if ($preferredSpecialProductionNo > 0) {
+            $preferredRow = $rows->firstWhere('No', $preferredSpecialProductionNo);
+            if (!$preferredRow && $requirePreferred) {
+                throw new \Exception('Seçilen özel üretim sipariş ile aynı ürüne ait değil veya rezervasyona uygun değil.');
+            }
+            if ($requirePreferred && intval($preferredRow->BostaAdet ?? 0) <= 0) {
+                throw new \Exception('Seçilen özel üretimin boş kapasitesi yok.');
+            }
+
+            $rows = $rows
+                ->filter(fn ($row) => intval($row->No ?? 0) === $preferredSpecialProductionNo)
+                ->concat($rows->reject(fn ($row) => intval($row->No ?? 0) === $preferredSpecialProductionNo))
+                ->values();
+        }
+
+        $totalAvailable = intval($rows->sum(fn ($row) => intval($row->BostaAdet ?? 0)));
+        $remaining = $requestedQuantity;
+        $allocations = [];
+
+        foreach ($rows as $row) {
+            if ($remaining <= 0) {
+                break;
+            }
+
+            $available = intval($row->BostaAdet ?? 0);
+            if ($available <= 0) {
+                continue;
+            }
+
+            $quantity = min($remaining, $available);
+            $allocations[] = [
+                'special_production_no' => intval($row->No ?? 0),
+                'quantity' => $quantity,
+                'available_before' => $available,
+            ];
+            $remaining -= $quantity;
+        }
+
+        return [
+            'rows' => $rows,
+            'allocations' => $remaining <= 0 ? $allocations : [],
+            'total_available' => $totalAvailable,
+        ];
+    }
+
+    private function supportsSplitGiedAllocations(): bool
+    {
+        return Schema::hasTable(self::GIED_ALLOCATION_TABLE);
+    }
+
+    private function specialProductionReservedQuantities(array $productionNos): array
+    {
+        $productionNos = collect($productionNos)
+            ->map(fn ($no) => intval($no))
+            ->filter(fn ($no) => $no > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($productionNos)) {
+            return [];
+        }
+
+        $reserved = array_fill_keys($productionNos, 0);
+        $ordersWithAllocationRows = [];
+
+        if ($this->supportsSplitGiedAllocations()) {
+            $allocationRows = DB::table(self::GIED_ALLOCATION_TABLE . ' as r')
+                ->join('tbSiparisSatir as s', 's.No', '=', 'r.SiparisSatirNo')
+                ->whereIn('r.OzelUretimSatirNo', $productionNos)
+                ->where('r.Aktif', 1)
+                ->where('s.Aktif', 1)
+                ->whereNotIn('s.Durum', ['Pasif', 'StokKarsilandi'])
+                ->select('r.OzelUretimSatirNo', DB::raw('SUM(r.Adet) as ReservedAdet'))
+                ->groupBy('r.OzelUretimSatirNo')
+                ->get();
+
+            foreach ($allocationRows as $row) {
+                $specialNo = intval($row->OzelUretimSatirNo ?? 0);
+                if ($specialNo > 0) {
+                    $reserved[$specialNo] = intval($reserved[$specialNo] ?? 0) + intval($row->ReservedAdet ?? 0);
+                }
+            }
+
+            $ordersWithAllocationRows = DB::table(self::GIED_ALLOCATION_TABLE . ' as r')
+                ->join('tbSiparisSatir as s', 's.No', '=', 'r.SiparisSatirNo')
+                ->whereIn('r.OzelUretimSatirNo', $productionNos)
+                ->where('r.Aktif', 1)
+                ->where('s.Aktif', 1)
+                ->whereNotIn('s.Durum', ['Pasif', 'StokKarsilandi'])
+                ->pluck('r.SiparisSatirNo')
+                ->map(fn ($no) => intval($no))
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $legacyQuery = DB::table('tbSiparisSatir')
+            ->whereIn('BagliOlduguOzelUretimNo', $productionNos)
+            ->where('Aktif', 1)
+            ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi']);
+
+        if (!empty($ordersWithAllocationRows)) {
+            $legacyQuery->whereNotIn('No', $ordersWithAllocationRows);
+        }
+
+        $legacyRows = $legacyQuery
+            ->select('BagliOlduguOzelUretimNo', DB::raw('SUM(Adet) as ReservedAdet'))
+            ->groupBy('BagliOlduguOzelUretimNo')
+            ->get();
+
+        foreach ($legacyRows as $row) {
+            $specialNo = intval($row->BagliOlduguOzelUretimNo ?? 0);
+            if ($specialNo > 0) {
+                $reserved[$specialNo] = intval($reserved[$specialNo] ?? 0) + intval($row->ReservedAdet ?? 0);
+            }
+        }
+
+        return $reserved;
+    }
+
+    private function specialProductionLinkedOrderRows(int $specialProductionNo)
+    {
+        if ($specialProductionNo <= 0) {
+            return collect();
+        }
+
+        $rows = collect();
+        $ordersWithAllocationRows = [];
+
+        if ($this->supportsSplitGiedAllocations()) {
+            $allocationRows = DB::table(self::GIED_ALLOCATION_TABLE . ' as r')
+                ->join('tbSiparisSatir as b', 'b.No', '=', 'r.SiparisSatirNo')
+                ->where('r.OzelUretimSatirNo', $specialProductionNo)
+                ->where('r.Aktif', 1)
+                ->where('b.Aktif', 1)
+                ->whereNotIn('b.Durum', ['Pasif', 'StokKarsilandi'])
+                ->select(
+                    'b.No',
+                    'b.SiparisNo',
+                    'b.Pazaryeri',
+                    'b.Magaza',
+                    'b.Musteri',
+                    'b.UrunAdi',
+                    'b.Adet',
+                    DB::raw('b.Adet AS SiparisAdet'),
+                    DB::raw('r.Adet AS RezervasyonAdet'),
+                    'b.Durum',
+                    'b.SiparisTarihi',
+                    'b.KargoSonTeslim',
+                    'b.GuncellemeTarihi',
+                    'b.GorevNo'
+                )
+                ->get();
+
+            $rows = $rows->merge($allocationRows);
+            $ordersWithAllocationRows = $allocationRows
+                ->pluck('No')
+                ->map(fn ($no) => intval($no))
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $legacyQuery = DB::table('tbSiparisSatir')
+            ->where('BagliOlduguOzelUretimNo', $specialProductionNo)
+            ->where('Aktif', 1)
+            ->whereNotIn('Durum', ['Pasif', 'StokKarsilandi']);
+
+        if (!empty($ordersWithAllocationRows)) {
+            $legacyQuery->whereNotIn('No', $ordersWithAllocationRows);
+        }
+
+        $legacyRows = $legacyQuery
+            ->select(
+                'No',
+                'SiparisNo',
+                'Pazaryeri',
+                'Magaza',
+                'Musteri',
+                'UrunAdi',
+                'Adet',
+                DB::raw('Adet AS SiparisAdet'),
+                DB::raw('Adet AS RezervasyonAdet'),
+                'Durum',
+                'SiparisTarihi',
+                'KargoSonTeslim',
+                'GuncellemeTarihi',
+                'GorevNo'
+            )
+            ->get();
+
+        return $rows
+            ->merge($legacyRows)
+            ->sortBy(fn ($row) => (string) ($row->SiparisTarihi ?? '') . '-' . str_pad((string) intval($row->No ?? 0), 10, '0', STR_PAD_LEFT))
+            ->values();
+    }
+
+    private function activeGiedAllocationsForOrder(int $siparisNo): array
+    {
+        if ($siparisNo <= 0 || !$this->supportsSplitGiedAllocations()) {
+            return [];
+        }
+
+        return DB::table(self::GIED_ALLOCATION_TABLE)
+            ->where('SiparisSatirNo', $siparisNo)
+            ->where('Aktif', 1)
+            ->orderBy('No')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'special_production_no' => intval($row->OzelUretimSatirNo ?? 0),
+                    'quantity' => intval($row->Adet ?? 0),
+                ];
+            })
+            ->filter(fn ($allocation) => $allocation['special_production_no'] > 0 && $allocation['quantity'] > 0)
+            ->values()
+            ->all();
+    }
+
+    private function replaceGiedAllocations(int $siparisNo, array $allocations): void
+    {
+        $allocations = collect($allocations)
+            ->map(function ($allocation) {
+                return [
+                    'special_production_no' => intval($allocation['special_production_no'] ?? $allocation['ozelUretimNo'] ?? 0),
+                    'quantity' => intval($allocation['quantity'] ?? $allocation['adet'] ?? 0),
+                ];
+            })
+            ->filter(fn ($allocation) => $allocation['special_production_no'] > 0 && $allocation['quantity'] > 0)
+            ->values()
+            ->all();
+
+        if ($siparisNo <= 0 || empty($allocations)) {
+            return;
+        }
+
+        if (!$this->supportsSplitGiedAllocations()) {
+            if (count($allocations) > 1) {
+                throw new \Exception('GİED paylaştırma tablosu bulunamadığı için çoklu rezervasyon yazılamıyor.');
+            }
+
+            return;
+        }
+
+        $this->clearGiedAllocations($siparisNo);
+        $now = now();
+        $rows = array_map(function ($allocation) use ($siparisNo, $now) {
+            return [
+                'SiparisSatirNo' => $siparisNo,
+                'OzelUretimSatirNo' => $allocation['special_production_no'],
+                'Adet' => $allocation['quantity'],
+                'Aktif' => 1,
+                'OlusturmaTarihi' => $now,
+                'GuncellemeTarihi' => $now,
+            ];
+        }, $allocations);
+
+        DB::table(self::GIED_ALLOCATION_TABLE)->insert($rows);
+    }
+
+    private function clearGiedAllocations(int $siparisNo): void
+    {
+        if ($siparisNo <= 0 || !$this->supportsSplitGiedAllocations()) {
+            return;
+        }
+
+        DB::table(self::GIED_ALLOCATION_TABLE)
+            ->where('SiparisSatirNo', $siparisNo)
+            ->where('Aktif', 1)
+            ->update([
+                'Aktif' => 0,
+                'GuncellemeTarihi' => now(),
+            ]);
     }
 
     private function formatNewestLegacyDateTime(array $values): string
@@ -4978,6 +5304,10 @@ class SiparisApiController extends Controller
 
     private function isReadyPersonnelTaskRecord(object $row): bool
     {
+        if (!empty($row->readiness_blocked)) {
+            return false;
+        }
+
         $readyQuantity = max(0, intval($row->Adet ?? 0));
 
         return $readyQuantity > 0 && $this->isLegacyProductionReadyValue($row->Onay ?? null);
@@ -4985,6 +5315,10 @@ class SiparisApiController extends Controller
 
     private function isAssignedWaitingPersonnelTaskRecord(object $row): bool
     {
+        if (!empty($row->readiness_blocked)) {
+            return true;
+        }
+
         $bekleyen = max(0, intval($row->BekleyenAdet ?? 0));
         $onay = $row->Onay ?? null;
 
@@ -5441,6 +5775,21 @@ class SiparisApiController extends Controller
                 // İş emri özeti, anlık BOM hesabı hata alsa da mevcut kayıtla gösterilebilsin.
             }
 
+            try {
+                $readinessIssue = $bomService->taskReadinessIssue($row, $total);
+                if ($readinessIssue !== null) {
+                    $row->availability_issue = $readinessIssue;
+                    $row->readiness_blocked = 1;
+                    $row->Adet = 0;
+                    $row->BekleyenAdet = max(
+                        max(0, intval($row->BekleyenAdet ?? 0)),
+                        $total
+                    );
+                }
+            } catch (\Throwable) {
+                // Canlı stok kontrolü geçici hata alırsa eski özet akışı bozulmasın.
+            }
+
             return $row;
         });
 
@@ -5623,24 +5972,37 @@ class SiparisApiController extends Controller
                     return max(0, intval($row->Adet ?? 0)) + max(0, intval($row->BekleyenAdet ?? 0));
                 }));
                 $detay = $adet . '/' . $toplamAdet . ' adet personelde bekliyor';
+                $firstAvailabilityIssue = $assignedWaitingRows
+                    ->map(fn ($row) => trim((string) ($row->availability_issue ?? '')))
+                    ->first(fn ($issue) => $issue !== '');
+                if ($firstAvailabilityIssue) {
+                    $detay .= ' - ' . $firstAvailabilityIssue;
+                }
 
                 foreach ($assignedWaitingRows as $record) {
                     $tarih = trim((string) ($record->GorevBaslamaTarihi ?? ''));
                     $gorevAdi = $resolveTaskName($record);
                     $kisi = trim((string) ($personelIsimleri[$record->PersonelNo] ?? ''));
                     $bekleyen = max(0, intval($record->BekleyenAdet ?? 0));
+                    $availabilityIssue = trim((string) ($record->availability_issue ?? ''));
 
                     if ($personelAd === '' && $kisi !== '') {
                         $personelAd = $kisi;
                     }
 
-                    $tooltipLines[] = ($tarih !== '' ? $tarih . ' - ' : '')
+                    $satir = ($tarih !== '' ? $tarih . ' - ' : '')
                         . ($kisi !== '' ? $kisi : 'Bilinmeyen')
                         . ': '
                         . $gorevAdi
                         . ' / '
                         . $bekleyen
                         . ' adet bekliyor';
+
+                    if ($availabilityIssue !== '') {
+                        $satir .= ' - ' . $availabilityIssue;
+                    }
+
+                    $tooltipLines[] = $satir;
                 }
             } elseif ($waitingRows->isNotEmpty()) {
                 $status = 'bekliyor';

@@ -12,6 +12,8 @@ use Illuminate\Notifications\Notifiable;
 
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 #[Fillable(['personnel_no', 'name', 'surname', 'address', 'phone', 'email', 'password', 'department_id'])]
 #[Hidden(['password', 'remember_token'])]
@@ -55,7 +57,38 @@ class User extends Authenticatable
      */
     public function isAdmin(): bool
     {
-        // Assuming the Migration assigns department_id = null or a specific "Admin" department for admins
-        return $this->department_id === null || $this->department_id === 0;
+        $legacyDecision = $this->legacyPersonnelAdminDecision();
+        if ($legacyDecision !== null) {
+            return $legacyDecision;
+        }
+
+        return $this->department_id === null || (int) $this->department_id === 0;
+    }
+
+    private function legacyPersonnelAdminDecision(): ?bool
+    {
+        $email = trim((string) ($this->email ?? ''));
+        if ($email === '') {
+            return null;
+        }
+
+        try {
+            if (!Schema::hasTable('tbPersonel')) {
+                return null;
+            }
+
+            $row = DB::table('tbPersonel')
+                ->select('BolumAdiNo')
+                ->whereRaw('LOWER(TRIM(Mail)) = ?', [strtolower($email)])
+                ->first();
+
+            if (!$row) {
+                return null;
+            }
+
+            return $row->BolumAdiNo !== null && (int) $row->BolumAdiNo === 0;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

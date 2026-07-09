@@ -28,3 +28,104 @@ Projede (Siparişler, Stoklar, İş Emirleri ve Veritabanı yönetiminde) fazlas
 
 ## 6. Servis Yapısı & Asenkron Mimari
 - Tüm modern sayfaların altında (AJAX veya Axios ile kurulan) mimari devreye girer. Sipariş oluşturma, stok güncelleme, ürün eşleştirme sayfalarında işlem yapılırken "Sayfayı Yenileme" (PostBack ekran beyazlama) sorunu komple bitirilmiş, modern SPAs (Single Page Application) hissi verilmiştir. Tüm alt tablolar API endpointlerinden verilerini anlık alır.
+
+## 7. Operasyon Takip Panelleri Ana Referansı: Devam Eden Görevler
+`resources/views/reports/ongoing.blade.php` dosyasındaki **Devam Eden Görevler** ekranı, ZemMobilya'nın canlı operasyon takip panelleri için ana tasarım referansıdır. Bu ekranın düzeni, üretim planlama, görev atama, stok/operasyon takip ve personel performans ekranlarında aynı mantıkla korunmalıdır. Bu standart eksiksiz uygulanmalı; yeni agentlar ve geliştiriciler bu sayfayı "canlı üretim paneli" tasarım şablonu kabul etmelidir.
+
+### 7.1. Sayfanın Ana Amacı
+- Kullanıcı tek ekranda **kim aktif, kim çalışıyor, kim boşta, hangi görev hangi aşamada** sorularının cevabını görmelidir.
+- Ekran bir rapor sayfası gibi pasif değil, canlı operasyon panosu gibi davranmalıdır.
+- Görsel yoğunluk kontrollü olmalı: bilgi bol, ama taraması kolay olmalıdır.
+- İlk bakışta açık görev, üretimdeki görev, hazır adet, bekleyen adet ve aktif personel net görünmelidir.
+
+### 7.2. Üst Özet Kartları
+Üst bölümde kompakt, ikonlu ve okunaklı özet kartları bulunur. Kartlar şu sırayı korumalıdır:
+- **Açık görev:** Sistemde açık takip edilen toplam görev.
+- **Şu an üretimde:** Personelin kabul edip fiilen çalıştığı görev sayısı. Bu metrik mutlaka görünür kalmalıdır.
+- **Hazır adet:** Üretime hazır toplam adet.
+- **Bekleyen adet:** Bekleyen toplam adet.
+- **Aktif personel:** Üretim akışında izlenen personel sayısı.
+
+Kartlar gereksiz açıklama metniyle şişirilmemeli; ikon, büyük sayı ve kısa etiket düzeni korunmalıdır. Büyük sayıların hizası ve kart yüksekliği sabit kalmalı, veri değişince layout zıplamamalıdır.
+
+### 7.3. Canlı "Çalışıyor / Üretimde" Durumu
+Üretim planlama sayfasındaki sarı işaret mantığı burada da aynen geçerlidir:
+- Personel görevi kabul etmiş ve çalışıyorsa durum **Çalışıyor** kabul edilir.
+- Çalışan görev satırı **sarı/amber vurgu** ile ayrılmalıdır.
+- Çalışan personel başlığı da hafif sarı zemin veya sol sarı çizgiyle işaretlenmelidir.
+- Satır üzerinde `Çalışıyor` veya `x üretiyor` rozeti görünmelidir.
+- Sarı renk yalnızca "personel şu anda bu görev üzerinde çalışıyor" anlamına gelmelidir; bekleyen, hazır veya normal aktif görevle karıştırılmamalıdır.
+
+Bu vurgu kritik bir operasyon anlamı taşıdığı için kaldırılmamalı, başka bir renge rastgele çevrilmemeli ve sadece dekoratif amaçla kullanılmamalıdır.
+
+### 7.4. Filtre ve Görünüm Mantığı
+Filtre çubuğu şu yapıyı korumalıdır:
+- Arama: personel, ürün, ara ürün veya sipariş numarası arar.
+- Bölüm filtresi: tüm bölümler veya seçili bölüm.
+- Segment kontrolü: **Aktif**, **Çalışıyor**, **Boşta**, **Tümü**.
+
+Segment davranışı:
+- **Aktif:** Görevi olan personeli ve görevlerini gösterir.
+- **Çalışıyor:** Sadece üretimde olan görevleri ve bu görevlerde çalışan personeli gösterir.
+- **Boşta:** Sadece görev bekleyen personeli gösterir.
+- **Tümü:** Aktif akışı ve boşta personeli aynı ekranda gösterir.
+
+Segmentler buton gibi değil, seçim durumu belli olan kompakt kontrol gibi tasarlanmalıdır. Aktif seçim teal/marka rengiyle vurgulanır.
+
+### 7.5. Ana Yerleşim
+Sayfa iki ana bölgeden oluşur:
+- **Üretim Akışı:** Sol/ana paneldir. Personel başlığı altında görev satırları yer alır.
+- **Boştaki Personel:** Sağ paneldir. Havuz veya yeni iş emri bekleyen personeli gösterir.
+
+Masaüstünde iki panel yan yana kullanılabilir. Tek görünüm seçildiğinde ana panel tam genişliğe yayılabilir. Mobilde paneller alt alta düşmeli, hiçbir metin veya buton taşmamalıdır.
+
+### 7.6. Personel ve Görev Satırı Standardı
+Personel başlığı şu bilgileri taşımalıdır:
+- Personel adı.
+- Bölüm adı.
+- Son tamamlanan kayıt bilgisi veya tamamlanan kayıt yok durumu.
+- Görev, hazır ve bekleyen adet çipleri.
+- Üretimde görev varsa sarı `x üretiyor` rozeti.
+
+Görev satırı şu bilgileri taşımalıdır:
+- Ürün/ara ürün adı.
+- Bölüm veya parça adı.
+- Tarih ve sipariş bağlantı bilgisi.
+- Durum etiketi ve yüzdelik ilerleme.
+- Hazır ve bekleyen adet kutuları.
+- Üretimdeyse sarı `Çalışıyor` rozeti ve sarı satır vurgusu.
+
+Görev satırları tablo gibi sıkışık görünmemeli; ama kart içinde gereksiz boşluk da bırakılmamalıdır. Operasyon kullanıcısı tek bakışta adetleri, durumu ve kimin çalıştığını okuyabilmelidir.
+
+### 7.7. Veri Sözleşmesi
+Bu ekranın canlı verisi `/api/database/personnel/production-overview` endpointinden gelir. Beklenen ana alanlar:
+- `summary.active_task_count`
+- `summary.ready_quantity`
+- `summary.waiting_quantity`
+- `summary.active_personnel`
+- `active_personnel[].full_name`
+- `active_personnel[].department_name`
+- `active_personnel[].active_tasks`
+- `active_personnel[].summary`
+- `idle_personnel[]`
+- `active_tasks[].is_in_production`
+- `active_tasks[].ready_quantity`
+- `active_tasks[].waiting_quantity`
+- `active_tasks[].readiness_percent`
+
+Özellikle `active_tasks` alanı kullanılmalıdır. Personeli sadece üst seviyedeki sayaçlarla göstermek yeterli değildir; görev satırları canlı akışın ana içeriğidir. `is_in_production === true` olan kayıtlar sarı "Çalışıyor" durumu üretir.
+
+### 7.8. Yenileme ve Canlılık
+- Sayfa otomatik olarak yaklaşık 30 saniyede bir yenilenmelidir.
+- Manuel **Yenile** butonu korunmalıdır.
+- Son güncelleme zamanı görünür olmalıdır.
+- Veri alınamazsa sayfa sessizce boş kalmamalı; kullanıcıya okunaklı hata/boş durum mesajı gösterilmelidir.
+
+### 7.9. Görsel Stil Kuralları
+- Panel ve kartlarda 8px civarı radius yeterlidir; aşırı yuvarlak, oyuncak gibi görünümden kaçınılır.
+- İç içe kart hissi minimumda tutulur. Bölümler net, sade ve taranabilir olmalıdır.
+- Teal/marka rengi ana aksiyonlarda, amber/sarı sadece üretimde/çalışıyor anlamında, mavi hazır adetlerde, gri ikincil bilgilerde kullanılmalıdır.
+- Boş personel panelinde kısa öneri/not alanı bulunabilir; metin kısa tutulmalıdır.
+- Sayfa landing/hero gibi tasarlanmamalıdır. Bu ekran operasyon aracıdır; hızlı karar vermeye hizmet eder.
+
+Bu bölümde tarif edilen düzen, ZemMobilya'nın modern operasyon paneli standardıdır ve ileride yapılacak tasarım değişikliklerinde referans alınmalıdır.

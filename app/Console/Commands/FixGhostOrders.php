@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Mevcut "hayalet" (orphan) siparişleri tarayıp otomatik düzelten bakım komutu.
@@ -36,7 +37,7 @@ class FixGhostOrders extends Command
             }
         }
 
-        $pendingSql = "(Onay IS NULL OR Onay = 0 OR Onay = '0' OR LOWER(TRIM(CAST(Onay AS CHAR))) = 'false')";
+        $pendingSql = "(Onay IS NULL OR TRIM(CAST(Onay AS CHAR)) = '' OR LOWER(TRIM(CAST(Onay AS CHAR))) NOT IN ('1', 'true', 'evet', 'yes'))";
 
         $hayaletler = DB::table('tbSiparisSatir')
             ->where('Durum', 'IsEmriVerildi')
@@ -57,7 +58,14 @@ class FixGhostOrders extends Command
                 ->where('SiparisSatirNo', $satirNo)->exists();
             $aktifGorevVar = DB::table('tbPersonelGorev')
                 ->where('SiparisSatirNo', $satirNo)
-                ->whereRaw($pendingSql)
+                ->where(function ($query) {
+                    $query->where('Adet', '>', 0)
+                        ->orWhere('BekleyenAdet', '>', 0);
+                })
+                ->where(function ($query) use ($pendingSql) {
+                    $query->where('BekleyenAdet', '>', 0)
+                        ->orWhereRaw($pendingSql);
+                })
                 ->exists();
 
             if ($havuzVar || $aktifGorevVar) {
@@ -66,16 +74,14 @@ class FixGhostOrders extends Command
                 continue;
             }
 
-            // Tamamlanan görev var mı?
-            $tamamlananGorevVar = DB::table('tbPersonelGorev')
-                ->where('SiparisSatirNo', $satirNo)
-                ->whereRaw("NOT {$pendingSql}")
-                ->exists();
+            // Tamamlanan gerçek personel üretimi var mı?
+            // tbGorevler aynı zamanda kök iş emri kaydı tuttuğu için PersonelNo'su
+            // olmayan satırları tamamlanmış üretim gibi değerlendirmiyoruz.
+            $tamamlananGorevVar = $this->completedProductionExistsForOrder($satirNo);
 
             if (!$tamamlananGorevVar) {
                 // SiparisSatirNo ile hiçbir kayıt bulamadık — eski veri olabilir
                 // GorevNo veya UrunIDNo ile global kontrol dene
-                $gorevNo = intval($sip->GorevNo ?? 0);
                 $eslesenUrunNo = intval($sip->EslesenUrunNo ?? 0);
 
                 $globalHavuz = false;
@@ -86,15 +92,30 @@ class FixGhostOrders extends Command
                         ->where('UrunIDNo', $eslesenUrunNo)->exists();
                     $globalGorev = DB::table('tbPersonelGorev')
                         ->where('UrunIDNo', $eslesenUrunNo)
-                        ->whereRaw($pendingSql)
+                        ->where(function ($query) {
+                            $query->where('Adet', '>', 0)
+                                ->orWhere('BekleyenAdet', '>', 0);
+                        })
+                        ->where(function ($query) use ($pendingSql) {
+                            $query->where('BekleyenAdet', '>', 0)
+                                ->orWhereRaw($pendingSql);
+                        })
                         ->exists();
                 }
+
+                $globalTamamlanan = $eslesenUrunNo > 0
+                    ? $this->completedProductionExistsForProduct($eslesenUrunNo)
+                    : false;
 
                 if ($globalHavuz || $globalGorev) {
                     // Global olarak hâlâ üretimde — muhtemelen eski trace'siz veri
                     $izlenemeyenler++;
                     $this->line("  ⚪ #{$satirNo} ({$sip->SiparisNo}) — Trace yok, global üretim aktif, ATLANACAK");
                     continue;
+                }
+
+                if ($globalTamamlanan) {
+                    $tamamlananGorevVar = true;
                 }
             }
 
@@ -138,5 +159,33 @@ class FixGhostOrders extends Command
         }
 
         return 0;
+    }
+
+    private function completedProductionExistsForOrder(int $siparisSatirNo): bool
+    {
+        if ($siparisSatirNo <= 0 || !Schema::hasTable('tbGorevler')) {
+            return false;
+        }
+
+        return DB::table('tbGorevler')
+            ->where('SiparisSatirNo', $siparisSatirNo)
+            ->where('ToplamAdet', '>', 0)
+            ->whereNotNull('PersonelNo')
+            ->where('PersonelNo', '>', 0)
+            ->exists();
+    }
+
+    private function completedProductionExistsForProduct(int $urunNo): bool
+    {
+        if ($urunNo <= 0 || !Schema::hasTable('tbGorevler')) {
+            return false;
+        }
+
+        return DB::table('tbGorevler')
+            ->where('UrunIDNo', $urunNo)
+            ->where('ToplamAdet', '>', 0)
+            ->whereNotNull('PersonelNo')
+            ->where('PersonelNo', '>', 0)
+            ->exists();
     }
 }

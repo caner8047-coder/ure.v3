@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\OperationalDataResetService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+
 class AdminController extends Controller
 {
     public function index()
@@ -91,5 +93,30 @@ class AdminController extends Controller
         }
         
         return response()->json(['success' => false, 'message' => 'Mesaj bulunamadı!'], 404);
+    }
+
+    public function resetTestData(Request $request, OperationalDataResetService $resetService)
+    {
+        if ($request->input('confirmation') !== 'RESET_TEST_DATA') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sıfırlama onayı eksik.',
+            ], 422);
+        }
+
+        try {
+            $result = $resetService->reset();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Test verileri temizlendi. Sipariş, görev, iş emri ve stok hareketleri sıfırlandı.',
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sıfırlama tamamlanamadı: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }

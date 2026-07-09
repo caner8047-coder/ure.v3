@@ -31,6 +31,10 @@ class OrderToWorkOrderServiceTest extends TestCase
             $table->boolean('Aktif')->default(true);
             $table->integer('EslesenUrunNo')->nullable();
             $table->string('EslesenUrunTur', 10)->nullable();
+            $table->string('EslesmeYontemi', 20)->nullable();
+            $table->dateTime('IsEmriTarihi')->nullable();
+            $table->integer('GorevNo')->nullable();
+            $table->text('TamponDusumleri')->nullable();
             $table->integer('BagliOlduguOzelUretimNo')->nullable();
             $table->string('Musteri', 200)->nullable();
             $table->string('Kategori', 100)->nullable();
@@ -79,5 +83,68 @@ class OrderToWorkOrderServiceTest extends TestCase
         $this->assertSame(2, $result['skipped']);
         $this->assertStringContainsString('PasifDevamEden', $result['errors'][0]);
         $this->assertStringContainsString('GİED', $result['errors'][1]);
+    }
+
+    public function test_it_uses_cached_product_match_when_order_row_has_not_been_persisted_yet(): void
+    {
+        Schema::create('tbUrunEslestirmeOnbellek', function (Blueprint $table) {
+            $table->increments('No');
+            $table->string('ExcelUrunAdi', 300)->unique();
+            $table->integer('EslesenUrunNo');
+            $table->string('EslesenUrunTur', 10);
+            $table->dateTime('OlusturmaTarihi')->nullable();
+        });
+
+        DB::table('tbSiparisSatir')->insert([
+            'No' => 3,
+            'SiparisNo' => 'S-3003',
+            'UrunAdi' => 'Puf C',
+            'Adet' => 2,
+            'Durum' => 'UretimBekliyor',
+            'Aktif' => 1,
+            'EslesenUrunNo' => null,
+            'EslesenUrunTur' => null,
+            'BagliOlduguOzelUretimNo' => null,
+            'Musteri' => 'Normal Musteri',
+            'Kategori' => 'Puf',
+        ]);
+
+        DB::table('tbUrunEslestirmeOnbellek')->insert([
+            'ExcelUrunAdi' => 'Puf C',
+            'EslesenUrunNo' => 77,
+            'EslesenUrunTur' => 'Nihai',
+        ]);
+
+        $bomService = Mockery::mock(BomService::class);
+        $bomService->shouldReceive('logIsEmriGecmisi')->once();
+
+        $workOrderService = Mockery::mock(WorkOrderService::class);
+        $workOrderService
+            ->shouldReceive('createWorkOrderForProduct')
+            ->once()
+            ->with(77, 2, 'StokDahil', '', Mockery::on(function ($traceContext) {
+                return intval($traceContext['siparisSatirNo'] ?? 0) === 3
+                    && ($traceContext['siparisNo'] ?? '') === 'S-3003';
+            }))
+            ->andReturn([
+                'success' => true,
+                'gorevNo' => 501,
+                'tamponDusumleri' => [],
+                'sistemUrunAdi' => 'Sistem Puf',
+            ]);
+
+        $service = new OrderToWorkOrderService($bomService, $workOrderService);
+        $result = $service->createOrderWorkOrders([3]);
+
+        $this->assertTrue($result['success']);
+        $this->assertSame(1, $result['created']);
+        $this->assertDatabaseHas('tbSiparisSatir', [
+            'No' => 3,
+            'EslesenUrunNo' => 77,
+            'EslesenUrunTur' => 'Nihai',
+            'EslesmeYontemi' => 'Onbellek',
+            'Durum' => 'IsEmriVerildi',
+            'GorevNo' => 501,
+        ]);
     }
 }

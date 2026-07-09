@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Gorev Raporlari')
+@section('title', $reportTitle ?? 'Gorev Raporlari')
 
 @section('page-actions')
     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetReportFilters()">
@@ -36,6 +36,19 @@
         padding: 12px 0 0;
         flex-wrap: wrap;
     }
+
+    .sort-head {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+    .sort-head::after {
+        content: '';
+        margin-left: 6px;
+        font-size: 0.7rem;
+    }
+    .sort-head.sort-asc::after { content: '▲'; }
+    .sort-head.sort-desc::after { content: '▼'; }
 </style>
 @endpush
 
@@ -132,7 +145,7 @@
     {{-- Table --}}
     <section class="panel-surface table-panel">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h3 class="section-title mb-0">Gorev rapor tablosu</h3>
+            <h3 class="section-title mb-0">{{ $reportTableTitle ?? 'Gorev rapor tablosu' }}</h3>
             <span class="report-chip warning" id="summaryQueryStateBadge">Araniyor...</span>
         </div>
 
@@ -140,15 +153,15 @@
             <table class="table-modern table-sm">
                 <thead>
                     <tr>
-                        <th>Gorev No</th>
-                        <th>Nihai Urun</th>
-                        <th>Ara Urun</th>
-                        <th>Bolum</th>
-                        <th>Personel</th>
-                        <th>Baslama</th>
-                        <th>Bitis</th>
-                        <th>Adet</th>
-                        <th>Performans</th>
+                        <th class="sort-head sort-desc" data-sort="gr.No" onclick="sortReport('gr.No')">Gorev No</th>
+                        <th class="sort-head" data-sort="UrunID" onclick="sortReport('UrunID')">Nihai Urun</th>
+                        <th class="sort-head" data-sort="AraUrunAdi" onclick="sortReport('AraUrunAdi')">Ara Urun</th>
+                        <th class="sort-head" data-sort="BolumAdi" onclick="sortReport('BolumAdi')">Bolum</th>
+                        <th class="sort-head" data-sort="Personel" onclick="sortReport('Personel')">Personel</th>
+                        <th class="sort-head" data-sort="GorevBaslamaTarihi" onclick="sortReport('GorevBaslamaTarihi')">Baslama</th>
+                        <th class="sort-head" data-sort="GorevBitisTarihi" onclick="sortReport('GorevBitisTarihi')">Bitis</th>
+                        <th class="sort-head" data-sort="ToplamAdet" onclick="sortReport('ToplamAdet')">Adet</th>
+                        <th class="sort-head" data-sort="Performans" onclick="sortReport('Performans')">Performans</th>
                     </tr>
                 </thead>
                 <tbody id="reportBody">
@@ -171,6 +184,8 @@
 <script>
 let currentPage = 1;
 let currentLastPage = 1;
+let currentSortCol = 'gr.No';
+let currentSortDir = 'desc';
 
 function handleDateFilterChange() {
     const value = document.getElementById('dateFilter').value;
@@ -183,6 +198,7 @@ function loadProducts() {
         .then((r) => r.json())
         .then((data) => {
             const select = document.getElementById('productSelect');
+            select.innerHTML = '<option value="">Tum Urunler</option>';
             (data.data || []).forEach((product) => {
                 select.innerHTML += `<option value="${product.id}">${escapeHtml(product.name)}</option>`;
             });
@@ -194,16 +210,29 @@ function loadPersonnel() {
         .then((r) => r.json())
         .then((data) => {
             const select = document.getElementById('personnelSelect');
-            (data.data || []).forEach((p) => {
-                const ism = `${escapeHtml(p.Ad)} ${escapeHtml(p.Soyad)}`;
-                select.innerHTML += `<option value="${p.PersonelNo}">${ism}</option>`;
-            });
+            select.innerHTML = '<option value="">Tümü</option>';
+            (data.data || [])
+                .map((p) => {
+                    const id = p.PersonelNo ?? p.id;
+                    const name = [p.Ad ?? p.name, p.Soyad ?? p.surname]
+                        .filter(Boolean)
+                        .join(' ')
+                        .trim();
+
+                    return { id, name };
+                })
+                .filter((person) => person.id && person.name)
+                .sort((a, b) => a.name.localeCompare(b.name, 'tr', { sensitivity: 'base' }))
+                .forEach((person) => {
+                    select.innerHTML += `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name)}</option>`;
+                });
         });
 }
 
 function loadReport(page = 1) {
     currentPage = page;
     let url = `/api/reports/tasks?page=${page}&per_page=20`;
+    url += `&sort_by=${encodeURIComponent(currentSortCol)}&sort_dir=${encodeURIComponent(currentSortDir)}`;
 
     const dateFilter = document.getElementById('dateFilter').value;
     if (dateFilter) url += `&date_filter=${dateFilter}`;
@@ -338,12 +367,33 @@ function changePage(delta) {
     loadReport(nextPage);
 }
 
+function updateSortIndicators() {
+    document.querySelectorAll('.sort-head').forEach((el) => el.classList.remove('sort-asc', 'sort-desc'));
+    const active = document.querySelector(`.sort-head[data-sort="${currentSortCol}"]`);
+    if (active) active.classList.add(currentSortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+}
+
+function sortReport(column) {
+    if (currentSortCol === column) {
+        currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortCol = column;
+        currentSortDir = 'asc';
+    }
+
+    updateSortIndicators();
+    loadReport(1);
+}
+
 function resetReportFilters() {
     document.getElementById('dateFilter').value = '';
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
     document.getElementById('productSelect').value = '';
     document.getElementById('personnelSelect').value = '';
+    currentSortCol = 'gr.No';
+    currentSortDir = 'desc';
+    updateSortIndicators();
     handleDateFilterChange();
     loadReport(1);
 }
@@ -378,6 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadProducts();
     loadPersonnel();
     handleDateFilterChange();
+    updateSortIndicators();
     loadReport();
 });
 </script>

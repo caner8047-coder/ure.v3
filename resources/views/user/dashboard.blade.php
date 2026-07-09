@@ -6,6 +6,9 @@
     <a href="{{ route('user.tasks') }}" class="btn btn-primary btn-sm">
         <i class="bi bi-list-check me-1"></i>Gorevlerim
     </a>
+    <a href="{{ route('user.assigned') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-check2-square me-1"></i>Uretime Hazir
+    </a>
     <a href="{{ route('user.available') }}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-hand-index-thumb me-1"></i>Alinabilir Isler
     </a>
@@ -58,11 +61,11 @@
             </div>
         </article>
         <article class="metric-card">
-            <p class="metric-label">Alinabilir Is</p>
-            <h3 class="metric-value" id="statAlinabilir">0</h3>
+            <p class="metric-label">Uretime Hazir</p>
+            <h3 class="metric-value" id="statUretimeHazir">0</h3>
             <div class="metric-foot">
-                <span class="soft-badge">Firsat</span>
-                <a href="{{ route('user.available') }}" class="btn btn-outline-secondary btn-sm">Incele</a>
+                <span class="soft-badge">Onay</span>
+                <a href="{{ route('user.assigned') }}" class="btn btn-outline-secondary btn-sm">Incele</a>
             </div>
         </article>
         <article class="metric-card">
@@ -103,8 +106,8 @@
             <section class="panel-surface">
                 <h3 class="section-title" style="margin-bottom: 12px;">Bugun nasil ilerleyelim?</h3>
                 <div class="info-list">
-                    <div class="info-row"><span>1. Aktif gorevler</span><strong>Onceligi belirle</strong></div>
-                    <div class="info-row"><span>2. Alinabilir isler</span><strong>Akisi bos birakma</strong></div>
+                    <div class="info-row"><span>1. Uretime hazir</span><strong>Onayla</strong></div>
+                    <div class="info-row"><span>2. Aktif gorevler</span><strong>Uretimi kaydet</strong></div>
                     <div class="info-row"><span>3. Rapor ekranin</span><strong>Performansini kontrol et</strong></div>
                 </div>
             </section>
@@ -124,18 +127,30 @@ function setDashboardRefresh(text) {
     document.getElementById('dashboardRefreshLabel').textContent = label;
 }
 
-function renderRecentTasks(tasks) {
-    if (!tasks.length) {
+function renderRecentTasks(tasks, assignedTasks = []) {
+    const activeRows = (tasks || []).map((task) => ({ ...task, dashboardStatus: 'Uretimde', dashboardBadge: 'warning' }));
+    const readyRows = (assignedTasks || [])
+        .filter((task) => toInt(task.Baslatilabilir) === 1)
+        .map((task) => ({
+            ...task,
+            UretilebilirAdet: task.Adet,
+            GorevBaslamaTarihi: task.GorevTarihi,
+            dashboardStatus: 'Uretime Hazir',
+            dashboardBadge: 'success',
+        }));
+    const rows = readyRows.concat(activeRows);
+
+    if (!rows.length) {
         dashboardRecentBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Henuz gorev yok.</td></tr>';
         return;
     }
-    dashboardRecentBody.innerHTML = tasks.slice(0, 6).map((task) => `
+    dashboardRecentBody.innerHTML = rows.slice(0, 6).map((task) => `
         <tr>
-            <td>${task.AraUrunAdi || task.UrunAdi || '-'}</td>
-            <td>${task.BolumAdi || '-'}</td>
-            <td>${task.BekleyenAdet ?? task.Adet ?? 0}</td>
-            <td><span class="soft-badge warning">Aktif</span></td>
-            <td>${task.GorevBaslamaTarihi || '-'}</td>
+            <td>${escapeHtml(task.AraUrunAdi || task.UrunAdi || '-')}</td>
+            <td>${escapeHtml(task.BolumAdi || '-')}</td>
+            <td>${toInt(task.UretilebilirAdet ?? task.Adet)}</td>
+            <td><span class="soft-badge ${task.dashboardBadge || 'warning'}">${escapeHtml(task.dashboardStatus || 'Uretimde')}</span></td>
+            <td>${escapeHtml(task.GorevBaslamaTarihi || '-')}</td>
         </tr>
     `).join('');
 }
@@ -143,12 +158,15 @@ function renderRecentTasks(tasks) {
 function updateDashboardMood(stats) {
     const activeTasks = Number(stats.aktifGorevler ?? 0);
     const availableTasks = Number(stats.alinabilir ?? 0);
+    const readyTasks = Number(stats.uretimeHazir ?? 0);
     const pendingAmount = Number(stats.bekleyenAdet ?? 0);
     const statusPill = document.getElementById('dashboardStatusPill');
     const statusLabel = document.getElementById('dashboardStatusLabel');
     const pulseLabel = document.getElementById('statPulseLabel');
 
-    if (activeTasks > 0) {
+    if (readyTasks > 0) {
+        statusPill.textContent = 'Onay bekliyor'; statusPill.className = 'soft-badge'; statusLabel.textContent = 'Uretime hazir';
+    } else if (activeTasks > 0) {
         statusPill.textContent = 'Odak aktif'; statusPill.className = 'soft-badge warning'; statusLabel.textContent = 'Aktif tempo';
     } else if (availableTasks > 0) {
         statusPill.textContent = 'Yeni is hazir'; statusPill.className = 'soft-badge'; statusLabel.textContent = 'Uygun gorev var';
@@ -158,22 +176,31 @@ function updateDashboardMood(stats) {
     pulseLabel.textContent = pendingAmount > 0 ? 'Bekleyen var' : 'Bekleme yok';
 }
 
-Promise.all([
-    fetch('/api/panel/dashboard-stats').then((r) => r.json()),
-    fetch('/api/panel/my-tasks').then((r) => r.json()),
-]).then(([stats, tasks]) => {
-    setDashboardRefresh();
-    if (stats.success) {
-        document.getElementById('statAktifGorev').textContent = stats.aktifGorevler ?? 0;
-        document.getElementById('statTamamlanan').textContent = stats.tamamlanan ?? 0;
-        document.getElementById('statAlinabilir').textContent = stats.alinabilir ?? 0;
-        document.getElementById('statBekleyen').textContent = stats.bekleyenAdet ?? 0;
-        updateDashboardMood(stats);
-    }
-    renderRecentTasks(tasks.tasks || []);
-}).catch(() => {
-    setDashboardRefresh('Veri alinamadi');
-    dashboardRecentBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Gorev verileri yuklenemedi.</td></tr>';
-});
+function refreshDashboard() {
+    Promise.all([
+        fetch('/api/panel/dashboard-stats').then((r) => r.json()),
+        fetch('/api/panel/my-tasks').then((r) => r.json()),
+        fetch('/api/panel/assigned-to-me').then((r) => r.json()),
+    ]).then(([stats, tasks, assigned]) => {
+        setDashboardRefresh();
+        if (stats.success) {
+            document.getElementById('statAktifGorev').textContent = stats.aktifGorevler ?? 0;
+            document.getElementById('statTamamlanan').textContent = stats.tamamlanan ?? 0;
+            document.getElementById('statUretimeHazir').textContent = stats.uretimeHazir ?? 0;
+            document.getElementById('statBekleyen').textContent = stats.bekleyenAdet ?? 0;
+            updateDashboardMood(stats);
+        }
+        renderRecentTasks(tasks.tasks || [], assigned.tasks || []);
+    }).catch(() => {
+        setDashboardRefresh('Veri alinamadi');
+        dashboardRecentBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Gorev verileri yuklenemedi.</td></tr>';
+    });
+}
+
+// Canlı senkronizasyon: Layout'taki polling bu fonksiyonu çağıracak
+window.refreshPersonnelTasks = refreshDashboard;
+
+// İlk yükleme
+refreshDashboard();
 </script>
 @endpush

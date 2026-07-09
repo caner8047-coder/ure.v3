@@ -30,6 +30,7 @@ trait UsesLegacyInMemoryDatabase
             $table->string('Musteri', 200)->nullable();
             $table->string('UrunAdi', 300)->nullable();
             $table->integer('Adet')->default(0);
+            $table->text('MusteriNotu')->nullable();
             $table->string('Kategori', 100)->nullable();
             $table->string('Durum', 30)->nullable();
             $table->boolean('Aktif')->default(true);
@@ -42,11 +43,51 @@ trait UsesLegacyInMemoryDatabase
             $table->text('TamponDusumleri')->nullable();
             $table->integer('BagliOlduguOzelUretimNo')->nullable();
             $table->dateTime('KargoSonTeslim')->nullable();
+            $table->string('StokKodu', 50)->nullable();
             $table->dateTime('YuklemeTarihi')->nullable();
             $table->dateTime('GuncellemeTarihi')->nullable();
             $table->boolean('SetMi')->default(false);
             $table->integer('SetNo')->nullable();
             $table->integer('AnaSetSatirNo')->nullable();
+        });
+    }
+
+    protected function createGiedAllocationTable(): void
+    {
+        Schema::create('tbSiparisOzelUretimRezervasyon', function (Blueprint $table) {
+            $table->increments('No');
+            $table->unsignedBigInteger('SiparisSatirNo')->index();
+            $table->unsignedBigInteger('OzelUretimSatirNo')->index();
+            $table->integer('Adet')->default(0);
+            $table->boolean('Aktif')->default(true);
+            $table->dateTime('OlusturmaTarihi')->nullable();
+            $table->dateTime('GuncellemeTarihi')->nullable();
+        });
+    }
+
+    protected function createLegacyOrderMatchingTables(): void
+    {
+        Schema::create('tbUrunEslestirmeOnbellek', function (Blueprint $table) {
+            $table->increments('No');
+            $table->string('ExcelUrunAdi', 300)->unique();
+            $table->integer('EslesenUrunNo');
+            $table->string('EslesenUrunTur', 10);
+            $table->dateTime('OlusturmaTarihi')->nullable();
+        });
+
+        Schema::create('tbSetTanimlari', function (Blueprint $table) {
+            $table->increments('No');
+            $table->string('ExcelSetAdi', 500)->unique();
+            $table->string('SetAdi', 200)->nullable();
+            $table->dateTime('OlusturmaTarihi')->nullable();
+            $table->boolean('Aktif')->default(true);
+        });
+
+        Schema::create('tbSetIcerikleri', function (Blueprint $table) {
+            $table->increments('No');
+            $table->integer('SetNo');
+            $table->integer('UrunNo');
+            $table->integer('Adet')->default(1);
         });
     }
 
@@ -86,6 +127,45 @@ trait UsesLegacyInMemoryDatabase
         });
     }
 
+    protected function createStockMovementsTable(): void
+    {
+        Schema::create('stock_movements', function (Blueprint $table) {
+            $table->id();
+            $table->uuid('movement_uuid')->unique();
+            $table->unsignedBigInteger('stock_row_no')->nullable();
+            $table->unsignedBigInteger('component_no')->nullable();
+            $table->unsignedBigInteger('department_no')->nullable();
+            $table->unsignedBigInteger('product_no')->nullable();
+            $table->string('movement_type', 60);
+            $table->string('direction', 20);
+            $table->string('title_human', 255);
+            $table->integer('quantity_before')->nullable();
+            $table->integer('quantity_delta')->default(0);
+            $table->integer('quantity_after')->nullable();
+            $table->integer('buffer_before')->nullable();
+            $table->integer('buffer_delta')->default(0);
+            $table->integer('buffer_after')->nullable();
+            $table->string('source_type', 60)->nullable();
+            $table->string('source_id', 150)->nullable();
+            $table->unsignedBigInteger('order_item_no')->nullable();
+            $table->string('order_no', 50)->nullable();
+            $table->unsignedBigInteger('work_order_no')->nullable();
+            $table->unsignedBigInteger('pool_no')->nullable();
+            $table->unsignedBigInteger('personnel_task_no')->nullable();
+            $table->string('source_screen', 100)->nullable();
+            $table->string('source_action', 100)->nullable();
+            $table->string('source_route', 200)->nullable();
+            $table->string('actor_type', 30)->default('system');
+            $table->string('actor_id', 50)->nullable();
+            $table->string('actor_name', 150)->nullable();
+            $table->string('actor_department', 150)->nullable();
+            $table->text('description')->nullable();
+            $table->json('metadata')->nullable();
+            $table->dateTime('happened_at');
+            $table->timestamps();
+        });
+    }
+
     protected function createLegacyDepartmentsTable(): void
     {
         Schema::create('tbBolum', function (Blueprint $table) {
@@ -105,6 +185,21 @@ trait UsesLegacyInMemoryDatabase
             $table->string('Telefon', 50)->nullable();
             $table->string('Adres', 255)->nullable();
             $table->string('Sifre', 255)->nullable();
+        });
+    }
+
+    protected function createLegacyMessagesTable(): void
+    {
+        Schema::create('tbIletisim', function (Blueprint $table) {
+            $table->increments('MesajNo');
+            $table->integer('PersonelNo')->nullable();
+            $table->integer('BolumAdiNo')->nullable();
+            $table->text('Mesaj')->nullable();
+            $table->string('Tarih', 50)->nullable();
+            $table->string('Saat', 20)->nullable();
+            $table->string('Mail', 150)->nullable();
+            $table->string('AdSoyad', 200)->nullable();
+            $table->boolean('Okundu')->default(false);
         });
     }
 
@@ -166,6 +261,20 @@ trait UsesLegacyInMemoryDatabase
             $table->integer('BolumAdiNo')->nullable();
             $table->integer('SiparisSatirNo')->nullable();
             $table->string('SiparisNo', 50)->nullable();
+        });
+    }
+
+    protected function createLegacyIssuedTasksTable(bool $withPersonnelNo = false): void
+    {
+        Schema::create('tbVerilenGorevler', function (Blueprint $table) use ($withPersonnelNo) {
+            $table->increments('No');
+            $table->integer('UrunIDNo')->nullable();
+            $table->dateTime('GorevTarihi')->nullable();
+            $table->integer('ToplamAdet')->nullable()->default(0);
+            $table->text('Aciklama')->nullable();
+            if ($withPersonnelNo) {
+                $table->integer('PersonelNo')->nullable();
+            }
         });
     }
 

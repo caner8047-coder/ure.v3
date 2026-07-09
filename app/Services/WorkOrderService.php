@@ -69,6 +69,8 @@ class WorkOrderService
                 );
             }
 
+            $this->bomService->refreshPoolReadinessForTrace($traceContext, $rootComponentNo);
+
             $gorevNo = $this->legacyWriter->insertLegacyWorkOrder([
                 'UrunIDNo' => $urunIDNo,
                 'AraUrunAdiNo' => $rootComponentNo,
@@ -110,10 +112,26 @@ class WorkOrderService
                 (string) $araUrunNo,
                 $adet,
                 '',
-                'StokHaric',
+                $recursiveStockMode,
                 $tamponDusumleri,
                 $traceContext
             );
+
+            if ($uretimAdedi <= 0) {
+                if (!empty($tamponDusumleri)) {
+                    return [
+                        'success' => true,
+                        'gorevNo' => 0,
+                        'fullyCoveredByStock' => true,
+                        'tamponDusumleri' => $tamponDusumleri,
+                        'requestedQuantity' => $adet,
+                        'netProductionQuantity' => 0,
+                        'sistemUrunAdi' => $araUrun->AraUrunAdi,
+                    ];
+                }
+
+                return ['success' => false, 'message' => 'Üretilecek net adet bulunamadı'];
+            }
 
             if ($uretimAdedi > 0 && trim($this->bomService->birAdimOncesiUrunAdlari((string) $araUrunNo)) !== '') {
                 $this->bomService->isEmriVerRecursive(
@@ -128,10 +146,12 @@ class WorkOrderService
                 );
             }
 
+            $this->bomService->refreshPoolReadinessForTrace($traceContext, $araUrunNo);
+
             $gorevNo = $this->legacyWriter->insertLegacyWorkOrder([
                 'UrunIDNo' => 0,
                 'AraUrunAdiNo' => $araUrunNo,
-                'ToplamAdet' => $adet,
+                'ToplamAdet' => $uretimAdedi,
                 'BolumAdiNo' => $bolumAdiNo > 0 ? $bolumAdiNo : null,
                 'Performans' => $araUrun->Performans ?? 0,
                 'SiparisSatirNo' => $traceContext['siparisSatirNo'] ?? null,
@@ -142,6 +162,8 @@ class WorkOrderService
                 'success' => true,
                 'gorevNo' => $gorevNo,
                 'tamponDusumleri' => $tamponDusumleri,
+                'requestedQuantity' => $adet,
+                'netProductionQuantity' => $uretimAdedi,
                 'sistemUrunAdi' => $araUrun->AraUrunAdi,
             ];
         });
@@ -268,10 +290,26 @@ class WorkOrderService
                 (string) $araUrunNo,
                 $adet,
                 $aciklama,
-                'StokHaric',
+                $recursiveStockMode,
                 $tamponDusumleri,
                 $traceContext
             );
+
+            if ($uretimAdedi <= 0) {
+                if (!empty($tamponDusumleri)) {
+                    return [
+                        'success' => true,
+                        'gorevNo' => 0,
+                        'fullyCoveredByStock' => true,
+                        'tamponDusumleri' => $tamponDusumleri,
+                        'requestedQuantity' => $adet,
+                        'netProductionQuantity' => 0,
+                        'sistemUrunAdi' => trim((string) ($araUrun->AraUrunAdi ?? '')),
+                    ];
+                }
+
+                return ['success' => false, 'message' => 'Üretilecek net adet bulunamadı'];
+            }
 
             if (
                 $withRecursion
@@ -290,23 +328,27 @@ class WorkOrderService
                 );
             }
 
+            $this->bomService->refreshPoolReadinessForTrace($traceContext, $araUrunNo);
+
             $legacyProductNo = $this->bomService->resolveLegacyProductNo($legacyUrunId);
             $gorevNo = $this->legacyWriter->insertLegacyWorkOrder([
                 'UrunIDNo' => $legacyProductNo,
                 'AraUrunAdiNo' => $araUrunNo,
-                'ToplamAdet' => $adet,
+                'ToplamAdet' => $uretimAdedi,
                 'BolumAdiNo' => (int) ($araUrun->BolumAdiNo ?? 0),
                 'Performans' => $araUrun->Performans ?? 0,
                 'SiparisSatirNo' => $traceContext['siparisSatirNo'] ?? null,
                 'SiparisNo' => $traceContext['siparisNo'] ?? null,
             ]);
 
-            $this->recordIssuedTask($araUrunNo, $adet, $aciklama);
+            $this->recordIssuedTask($araUrunNo, $uretimAdedi, $aciklama);
 
             return [
                 'success' => true,
                 'gorevNo' => $gorevNo,
                 'tamponDusumleri' => $tamponDusumleri,
+                'requestedQuantity' => $adet,
+                'netProductionQuantity' => $uretimAdedi,
                 'sistemUrunAdi' => trim((string) ($araUrun->AraUrunAdi ?? '')),
             ];
         });

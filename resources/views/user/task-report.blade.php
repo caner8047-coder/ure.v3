@@ -54,11 +54,11 @@ fetch('/api/panel/task-report')
                 <tbody>
                     ${report.map(row => `
                         <tr>
-                            <td>${row.UrunAdi || '-'}</td>
-                            <td>${row.ToplamUretim || 0}</td>
-                            <td>${row.GorevSayisi || 0}</td>
-                            <td>${row.IlkGorev || '-'}</td>
-                            <td>${row.SonGorev || '-'}</td>
+                            <td>${escapeHtml(row.UrunAdi || '-')}</td>
+                            <td>${toInt(row.ToplamUretim)}</td>
+                            <td>${toInt(row.GorevSayisi)}</td>
+                            <td>${escapeHtml(row.IlkGorev || '-')}</td>
+                            <td>${escapeHtml(row.SonGorev || '-')}</td>
                         </tr>
                     `).join('')}
                 </tbody>

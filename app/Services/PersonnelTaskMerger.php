@@ -117,7 +117,13 @@ class PersonnelTaskMerger
             $this->approvalPhase($row, $has['Onay'] ?? false),
             // Sipariş izini koruma — farklı siparişlerin görevleri birleştirilmez
             ($has['SiparisSatirNo'] ?? false) ? intval($row->SiparisSatirNo ?? 0) : 0,
+            ($has['SiparisNo'] ?? false) ? $this->orderNoKey($row->SiparisNo ?? '') : '',
         ]);
+    }
+
+    private function orderNoKey(mixed $value): string
+    {
+        return strtoupper(trim((string) $value));
     }
 
     private function componentKey(object $row): string

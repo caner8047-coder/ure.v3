@@ -57,7 +57,10 @@ class WorkOrderAnomalyDetector
             ];
         }
 
+        $isLinkedToSpecialProduction = $specialProductionNo > 0 && $status === 'UretimdenKarsilaniyor';
+
         if (in_array($status, ['IsEmriVerildi', 'UretimdenKarsilaniyor', 'PasifDevamEden'], true)
+            && !$isLinkedToSpecialProduction
             && $poolRows->isEmpty()
             && $activeTaskRows->isEmpty()
         ) {
