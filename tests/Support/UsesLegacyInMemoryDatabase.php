@@ -99,6 +99,9 @@ trait UsesLegacyInMemoryDatabase
             $table->text('AraAdlarYol')->nullable();
             $table->string('SistemAdi', 500)->nullable();
             $table->string('SistemKodu', 500)->nullable();
+            $table->string('Resim', 500)->nullable();
+            $table->integer('MergedIntoNo')->nullable();
+            $table->dateTime('MergedAt')->nullable();
         });
     }
 
@@ -112,6 +115,9 @@ trait UsesLegacyInMemoryDatabase
             $table->integer('MinAdet')->nullable()->default(0);
             $table->string('UrunCesidi', 100)->nullable();
             $table->text('Yol')->nullable();
+            $table->string('Resim', 500)->nullable();
+            $table->integer('MergedIntoNo')->nullable();
+            $table->dateTime('MergedAt')->nullable();
         });
     }
 

@@ -68,8 +68,8 @@ Aşağıdaki satırları ekle (dosyanın sonuna):
 
 ```
 # Telegram Bildirim
-TELEGRAM_BOT_TOKEN=8954600072:AAFsC9MAmzgC2trOjldOjlFuZlDhb_M61z8
-TELEGRAM_CHAT_ID=6180022743
+TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID=YOUR_TELEGRAM_CHAT_ID
 ```
 
 **ÖNEMLİ:** Sunucuda QUEUE_CONNECTION muhtemelen `database`. Bunu `sync` yap:

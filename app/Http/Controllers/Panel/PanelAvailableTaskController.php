@@ -30,6 +30,9 @@ class PanelAvailableTaskController extends Controller
 
     private function legacyDateOrderSql(string $column): string
     {
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return "datetime(COALESCE({$column}, '01/01/2000 00:00'), ' localtime')";
+        }
         return "STR_TO_DATE(IFNULL({$column}, '01/01/2000'), '%d/%m/%Y %H:%i')";
     }
 

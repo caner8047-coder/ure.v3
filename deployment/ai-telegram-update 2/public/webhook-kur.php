@@ -2,7 +2,7 @@
 // Bu dosyayı tarayıcıdan bir kez ac, webhook kurulsun.
 // Kurulumdan sonra bu dosyayı sil!
 
-$BOT_TOKEN = '8954600072:AAFsC9MAmzgC2trOjldOjlFuZlDhb_M61z8';
+$BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
 $WEBHOOK_URL = 'https://fa.zolm.com.tr/telegram/webhook';
 
 // Webhook'u kur
