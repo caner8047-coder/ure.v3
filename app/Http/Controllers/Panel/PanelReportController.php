@@ -68,9 +68,16 @@ class PanelReportController extends Controller
     public function assignedToMe(Request $request)
     {
         $personelNo = $this->personelNo($request);
-        $componentImageSql = "IFNULL((SELECT TOP 1 au2.Resim FROM tbAraUrun au2 WHERE au2.No = pg.AraUrunAdiNo), '')";
-        $productImageSql = "IFNULL((SELECT TOP 1 u2.Resim FROM tbUrunler u2 WHERE u2.No = pg.UrunIDNo), '')";
-        $dueTaskSql = "(TRIM(IFNULL(pg.GorevBaslamaTarihi, '')) <> '' AND STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i') <= NOW())";
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $componentImageSql = $isSqlite
+            ? "COALESCE((SELECT au2.Resim FROM tbAraUrun au2 WHERE au2.No = pg.AraUrunAdiNo LIMIT 1), '')"
+            : "IFNULL((SELECT TOP 1 au2.Resim FROM tbAraUrun au2 WHERE au2.No = pg.AraUrunAdiNo), '')";
+        $productImageSql = $isSqlite
+            ? "COALESCE((SELECT u2.Resim FROM tbUrunler u2 WHERE u2.No = pg.UrunIDNo LIMIT 1), '')"
+            : "IFNULL((SELECT TOP 1 u2.Resim FROM tbUrunler u2 WHERE u2.No = pg.UrunIDNo), '')";
+        $dueTaskSql = $isSqlite
+            ? "(TRIM(COALESCE(pg.GorevBaslamaTarihi, '')) <> '' AND datetime(pg.GorevBaslamaTarihi, 'localtime') <= datetime('now'))"
+            : "(TRIM(IFNULL(pg.GorevBaslamaTarihi, '')) <> '' AND STR_TO_DATE(pg.GorevBaslamaTarihi, '%d/%m/%Y %H:%i') <= NOW())";
 
         $readyTasks = DB::table('tbPersonelGorev as pg')
             ->leftJoin('tbAraUrun as au', 'pg.AraUrunAdiNo', '=', 'au.No')
