@@ -329,10 +329,16 @@ class ProductMergeTest extends TestCase
     private function addProductMergeTestSchema(): void
     {
         foreach (['tbUrunler', 'tbAraUrun'] as $table) {
-            Schema::table($table, function (Blueprint $blueprint) {
-                $blueprint->integer('MergedIntoNo')->nullable();
-                $blueprint->dateTime('MergedAt')->nullable();
-                $blueprint->integer('MergedBy')->nullable();
+            Schema::table($table, function (Blueprint $blueprint) use ($table) {
+                if (!Schema::hasColumn($table, 'MergedIntoNo')) {
+                    $blueprint->integer('MergedIntoNo')->nullable();
+                }
+                if (!Schema::hasColumn($table, 'MergedAt')) {
+                    $blueprint->dateTime('MergedAt')->nullable();
+                }
+                if (!Schema::hasColumn($table, 'MergedBy')) {
+                    $blueprint->integer('MergedBy')->nullable();
+                }
             });
         }
 

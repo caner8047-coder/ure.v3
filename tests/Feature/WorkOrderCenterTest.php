@@ -172,6 +172,7 @@ class WorkOrderCenterTest extends TestCase
             'No' => 7,
             'UrunID' => 'puf-zem',
             'SistemAdi' => 'Puf Zem',
+            'AraAdlarYol' => '11',
         ]);
 
         DB::table('tbAraUrun')->insert([
@@ -233,7 +234,7 @@ class WorkOrderCenterTest extends TestCase
             'GorevBaslamaTarihi' => '18/04/2026 10:00',
             'Adet' => 2,
             'BekleyenAdet' => 2,
-            'Onay' => 'false',
+            'Onay' => 'hazir',
             'AraUrunAdiNo' => 8,
             'BolumAdiNo' => 3,
         ]);
