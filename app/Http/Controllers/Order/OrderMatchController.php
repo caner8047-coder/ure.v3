@@ -46,7 +46,18 @@ class OrderMatchController extends Controller
 
             $updatedCount = 0;
             if (!empty($urunAdi)) {
-                DB::statement("INSERT INTO tbUrunEslestirmeOnbellek (ExcelUrunAdi, EslesenUrunNo, EslesenUrunTur) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE EslesenUrunNo = VALUES(EslesenUrunNo), EslesenUrunTur = VALUES(EslesenUrunTur), OlusturmaTarihi = CURRENT_TIMESTAMP", [$urunAdi, $eslesenUrunNo, $eslesenUrunTur]);
+                if (DB::connection()->getDriverName() === 'sqlite') {
+                    DB::table('tbUrunEslestirmeOnbellek')->updateOrInsert(
+                        ['ExcelUrunAdi' => $urunAdi],
+                        [
+                            'EslesenUrunNo' => $eslesenUrunNo,
+                            'EslesenUrunTur' => $eslesenUrunTur,
+                            'OlusturmaTarihi' => now()
+                        ]
+                    );
+                } else {
+                    DB::statement("INSERT INTO tbUrunEslestirmeOnbellek (ExcelUrunAdi, EslesenUrunNo, EslesenUrunTur) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE EslesenUrunNo = VALUES(EslesenUrunNo), EslesenUrunTur = VALUES(EslesenUrunTur), OlusturmaTarihi = CURRENT_TIMESTAMP", [$urunAdi, $eslesenUrunNo, $eslesenUrunTur]);
+                }
                 $updatedCount = DB::table('tbSiparisSatir')->where('UrunAdi', $urunAdi)->where('EslesmeYontemi', '!=', 'Manuel')->where('Aktif', 1)->where('Durum', 'UretimBekliyor')->whereNull('BagliOlduguOzelUretimNo')->where('No', '!=', $siparisSatirNo)->update([
                     'EslesenUrunNo' => $eslesenUrunNo, 'EslesenUrunTur' => $eslesenUrunTur,
                     'EslesmePuani' => 100, 'EslesmeYontemi' => 'Onbellek', 'GuncellemeTarihi' => now()
@@ -131,7 +142,18 @@ class OrderMatchController extends Controller
         $urunNo = intval($data['urunNo'] ?? 0);
         if (empty($excelName) || $urunNo <= 0) return response()->json(['success' => false, 'message' => 'Geçersiz parametreler.'], 422);
 
-        DB::statement("INSERT INTO tbUrunEslestirmeOnbellek (ExcelUrunAdi, EslesenUrunNo, EslesenUrunTur) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE EslesenUrunNo = VALUES(EslesenUrunNo), EslesenUrunTur = VALUES(EslesenUrunTur), OlusturmaTarihi = CURRENT_TIMESTAMP", [$excelName, $urunNo, 'Nihai']);
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            DB::table('tbUrunEslestirmeOnbellek')->updateOrInsert(
+                ['ExcelUrunAdi' => $excelName],
+                [
+                    'EslesenUrunNo' => $urunNo,
+                    'EslesenUrunTur' => 'Nihai',
+                    'OlusturmaTarihi' => now()
+                ]
+            );
+        } else {
+            DB::statement("INSERT INTO tbUrunEslestirmeOnbellek (ExcelUrunAdi, EslesenUrunNo, EslesenUrunTur) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE EslesenUrunNo = VALUES(EslesenUrunNo), EslesenUrunTur = VALUES(EslesenUrunTur), OlusturmaTarihi = CURRENT_TIMESTAMP", [$excelName, $urunNo, 'Nihai']);
+        }
         return response()->json(['success' => true, 'message' => 'Önbelleğe eklendi.']);
     }
 

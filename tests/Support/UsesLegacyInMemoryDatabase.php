@@ -16,7 +16,18 @@ trait UsesLegacyInMemoryDatabase
 
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
-        DB::reconnect('sqlite');
+        $conn = DB::reconnect('sqlite');
+
+        // Add custom SUBSTRING function to SQLite connection for compatibility with legacy queries in tests
+        $pdo = $conn->getPdo();
+        if ($pdo) {
+            $pdo->sqliteCreateFunction('SUBSTRING', function ($string, $start, $length = null) {
+                if ($length === null) {
+                    return substr($string, $start - 1);
+                }
+                return substr($string, $start - 1, $length);
+            });
+        }
     }
 
     protected function createLegacyOrdersTable(): void
@@ -222,6 +233,7 @@ trait UsesLegacyInMemoryDatabase
             $table->dateTime('SonKontrolTarihi')->nullable();
             $table->dateTime('SonUyariTarihi')->nullable();
             $table->dateTime('OlusturmaTarihi')->nullable();
+            $table->dateTime('GuncellemeTarihi')->nullable();
         });
 
         Schema::create('tbKritikStokUyari', function (Blueprint $table) {
