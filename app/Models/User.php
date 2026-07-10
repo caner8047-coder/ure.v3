@@ -24,6 +24,8 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, HasRoles;
 
+    protected $guard_name = 'web';
+
     /**
      * Get the user's department.
      */

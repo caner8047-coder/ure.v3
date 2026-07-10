@@ -23,6 +23,7 @@
                 ['route' => 'workorders.center', 'patterns' => ['workorders.center', 'workorders.history'], 'icon' => 'bi bi-clock-history', 'label' => 'İş Emri Merkezi'],
                 ['route' => 'tasks.assign', 'patterns' => ['tasks.assign', 'admin.tasks'], 'icon' => 'bi bi-person-plus', 'label' => 'Personele Görev Ata'],
                 ['route' => 'production.planning', 'patterns' => ['production.planning'], 'icon' => 'bi bi-calendar-check', 'label' => 'Üretim Planlama'],
+                ['route' => 'forecast.dashboard', 'patterns' => ['forecast.dashboard'], 'icon' => 'bi bi-cpu', 'label' => 'AI Talep Tahminleri'],
             ],
         ],
         [

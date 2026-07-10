@@ -27,6 +27,7 @@ use App\Http\Controllers\WorkOrderCenterController;
 use App\Http\Controllers\WorkOrderPreviewController;
 use App\Http\Controllers\TelegramSettingsController;
 use App\Http\Controllers\TelegramWebhookController;
+use App\Http\Controllers\ForecastController;
 
 Route::get('/', function () {
     if (!Auth::check()) {
@@ -264,6 +265,15 @@ Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () 
     });
 });
 
+// ===== AI Forecasting API =====
+Route::prefix('api/forecast')->middleware(['auth', 'admin'])->group(function () {
+    Route::get('/products', [ForecastController::class, 'index']);
+    Route::get('/product/{id}', [ForecastController::class, 'detail']);
+    Route::post('/approve/{id}', [ForecastController::class, 'approve']);
+    Route::post('/override/{id}', [ForecastController::class, 'override']);
+    Route::post('/run-now', [ForecastController::class, 'runForecast']);
+});
+
 // ===== Authenticated Personnel Pages =====
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', function () {
@@ -356,6 +366,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/uretim-bekleyen', function () { return view('production.pending'); })->name('production.pending');
     Route::get('/uretim-planlama', function () { return view('production.planning'); })->name('production.planning');
     Route::get('/pasif-devam-eden', function () { return view('production.pasif-devam-eden'); })->name('production.pasif');
+    Route::get('/yapay-zeka-tahmin', [ForecastController::class, 'dashboardView'])->name('forecast.dashboard');
 
     // Ürün
     Route::get('/yeni-urun', function () { return view('products.create'); })->name('products.create');

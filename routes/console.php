@@ -13,3 +13,6 @@ Schedule::command('telegram:ai-poll')->everyThirtySeconds()->withoutOverlapping(
 
 // Her sabah 08:00'de gunluk uretim raporu
 Schedule::command('telegram:daily-report')->dailyAt('08:00')->withoutOverlapping();
+
+// Her Pazar gecesi 23:59'da haftalık AI Talep Tahmini hesaplama
+Schedule::command('forecast:run')->weeklyOn(0, '23:59')->withoutOverlapping();

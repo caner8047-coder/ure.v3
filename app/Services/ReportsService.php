@@ -22,6 +22,10 @@ class ReportsService
 
     public function legacyDateSql(string $column): string
     {
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return "{$column}";
+        }
+
         $value = "NULLIF(TRIM(CAST({$column} AS CHAR)), '')";
 
         return "COALESCE("
