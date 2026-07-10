@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Schema;
 use App\Services\BomService;
 use App\Services\PersonnelTaskMerger;
 use App\Services\WorkOrderEventLogger;
+use App\Models\Personnel;
 
 class PlanningService
 {
@@ -701,27 +702,19 @@ class PlanningService
             "Takip: {$trackingCode}",
         ]));
 
-        $insert = [
-            'PersonelNo' => $targetPersonnelNo,
-            'BolumAdiNo' => null,
-            'Mesaj' => $message,
-            'Tarih' => now()->format('d/m/Y'),
-        ];
-
-        if (Schema::hasColumn('tbIletisim', 'Saat')) {
-            $insert['Saat'] = now()->format('H:i');
+        $targetPersonnel = Personnel::where('PersonelNo', $targetPersonnelNo)->first();
+        if ($targetPersonnel) {
+            app(\App\Services\NotificationService::class)->sendToUser(
+                $targetPersonnel,
+                'Üretim Akışı Bildirimi',
+                "Bekleyen görev: {$waitingTaskName} (#" . intval($task->No ?? 0) . ")\n" .
+                "Beklenen parça: {$componentName}\n" .
+                "Beklenen adet: {$displayQuantity}\n" .
+                "Aksiyon: Üretim durumunu kontrol edip stoğa giriş yapınız.\n" .
+                "Takip: {$trackingCode}",
+                ['database', 'telegram', 'email']
+            );
         }
-        if (Schema::hasColumn('tbIletisim', 'Mail')) {
-            $insert['Mail'] = $target->Mail ?? null;
-        }
-        if (Schema::hasColumn('tbIletisim', 'AdSoyad')) {
-            $insert['AdSoyad'] = $adminName;
-        }
-        if (Schema::hasColumn('tbIletisim', 'Okundu')) {
-            $insert['Okundu'] = 0;
-        }
-
-        DB::table('tbIletisim')->insert(array_intersect_key($insert, array_flip(Schema::getColumnListing('tbIletisim'))));
 
         $this->logPlanningEvent('dependency_notification_sent_by_admin', $task, null, [
             'next_step_human' => 'Alt parcayi uretecek personele yonetici tarafindan bildirim gonderildi.',
