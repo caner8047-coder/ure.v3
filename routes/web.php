@@ -130,18 +130,23 @@ Route::get('/Resimler/{filename}', function (string $filename) {
 
 // ===== Stok API =====
 Route::prefix('api/stocks')->middleware('auth')->group(function () {
-    Route::get('/export', [StocksController::class, 'exportWorkbook']);
-    Route::get('/movements', [StocksController::class, 'getMovementFeed']);
-    Route::get('/', [StocksController::class, 'getStocks']);
-    Route::get('/lookups', [StocksController::class, 'getLookups']);
-    Route::get('/{id}/movements/export', [StocksController::class, 'exportMovements'])->whereNumber('id');
-    Route::get('/{id}/movements', [StocksController::class, 'getMovements'])->whereNumber('id');
-    Route::post('/', [StocksController::class, 'store']);
-    Route::put('/{id}', [StocksController::class, 'update']);
-    Route::delete('/{id}', [StocksController::class, 'destroy']);
-    Route::post('/reset-buffer', [StocksController::class, 'resetBuffer']);
-    Route::post('/import', [StocksController::class, 'importWorkbook']);
-    Route::post('/import-csv', [StocksController::class, 'importWorkbook']);
+    Route::middleware('permission:view stocks')->group(function () {
+        Route::get('/export', [StocksController::class, 'exportWorkbook']);
+        Route::get('/movements', [StocksController::class, 'getMovementFeed']);
+        Route::get('/', [StocksController::class, 'getStocks']);
+        Route::get('/lookups', [StocksController::class, 'getLookups']);
+        Route::get('/{id}/movements/export', [StocksController::class, 'exportMovements'])->whereNumber('id');
+        Route::get('/{id}/movements', [StocksController::class, 'getMovements'])->whereNumber('id');
+    });
+
+    Route::middleware('permission:manage stocks')->group(function () {
+        Route::post('/', [StocksController::class, 'store']);
+        Route::put('/{id}', [StocksController::class, 'update']);
+        Route::delete('/{id}', [StocksController::class, 'destroy']);
+        Route::post('/reset-buffer', [StocksController::class, 'resetBuffer']);
+        Route::post('/import', [StocksController::class, 'importWorkbook']);
+        Route::post('/import-csv', [StocksController::class, 'importWorkbook']);
+    });
 });
 
 // ===== Reports API =====
@@ -229,21 +234,26 @@ Route::prefix('api/panel')->middleware('auth')->group(function () {
 
 // ===== Üretim Planlama API =====
 Route::prefix('api/planning')->middleware(['auth', 'admin'])->group(function () {
-    Route::get('/personnel', [ProductionPlanningController::class, 'getPersonnelList']);
-    Route::get('/personnel/{personelNo}/tasks', [ProductionPlanningController::class, 'getPersonnelTasks']);
-    Route::post('/increment/{id}', [ProductionPlanningController::class, 'incrementTask']);
-    Route::post('/decrement/{id}', [ProductionPlanningController::class, 'decrementTask']);
-    Route::get('/task/{id}/dependency-info', [ProductionPlanningController::class, 'dependencyInfo']);
-    Route::post('/task/{id}/notify-dependency', [ProductionPlanningController::class, 'notifyDependency']);
-    Route::delete('/task/{id}', [ProductionPlanningController::class, 'deleteTask']);
-    Route::put('/task/{id}/date', [ProductionPlanningController::class, 'updateTaskDate']);
-    Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
-    Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
-    Route::get('/department/{id}/pool', [ProductionPlanningController::class, 'getPoolTasks']);
-    Route::get('/department/{id}/tasks', [ProductionPlanningController::class, 'getDepartmentPersonnelTasks']);
-    Route::post('/pool/assign', [ProductionPlanningController::class, 'assignFromPool']);
-    Route::put('/task/{id}/quantity', [ProductionPlanningController::class, 'setTaskQuantity']);
-    Route::get('/task/{id}/history', [ProductionPlanningController::class, 'getTaskHistory']);
+    Route::middleware('permission:view planning')->group(function () {
+        Route::get('/personnel', [ProductionPlanningController::class, 'getPersonnelList']);
+        Route::get('/personnel/{personelNo}/tasks', [ProductionPlanningController::class, 'getPersonnelTasks']);
+        Route::get('/task/{id}/dependency-info', [ProductionPlanningController::class, 'dependencyInfo']);
+        Route::get('/task/{id}/transfer-options', [ProductionPlanningController::class, 'getTransferOptions']);
+        Route::get('/department/{id}/pool', [ProductionPlanningController::class, 'getPoolTasks']);
+        Route::get('/department/{id}/tasks', [ProductionPlanningController::class, 'getDepartmentPersonnelTasks']);
+        Route::get('/task/{id}/history', [ProductionPlanningController::class, 'getTaskHistory']);
+    });
+
+    Route::middleware('permission:manage planning')->group(function () {
+        Route::post('/increment/{id}', [ProductionPlanningController::class, 'incrementTask']);
+        Route::post('/decrement/{id}', [ProductionPlanningController::class, 'decrementTask']);
+        Route::post('/task/{id}/notify-dependency', [ProductionPlanningController::class, 'notifyDependency']);
+        Route::delete('/task/{id}', [ProductionPlanningController::class, 'deleteTask']);
+        Route::put('/task/{id}/date', [ProductionPlanningController::class, 'updateTaskDate']);
+        Route::post('/task/{id}/transfer', [ProductionPlanningController::class, 'transferTask']);
+        Route::post('/pool/assign', [ProductionPlanningController::class, 'assignFromPool']);
+        Route::put('/task/{id}/quantity', [ProductionPlanningController::class, 'setTaskQuantity']);
+    });
 });
 
 // ===== Authenticated Personnel Pages =====

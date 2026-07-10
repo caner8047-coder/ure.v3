@@ -17,5 +17,6 @@ class DatabaseSeeder extends Seeder
     {
         // Legacy ZemMobilya veritabanı verilerini yükle
         $this->call(LegacyDataSeeder::class);
+        $this->call(RolesAndPermissionsSeeder::class);
     }
 }
