@@ -8,6 +8,7 @@ use App\Http\Controllers\SiparisApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\StocksController;
 use App\Http\Controllers\ReportsController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\Admin\AdminDepartmentController;
 use App\Http\Controllers\Admin\AdminPersonnelController;
 use App\Http\Controllers\Admin\AdminComponentController;
@@ -159,6 +160,13 @@ Route::prefix('api/reports')->middleware('auth')->group(function () {
     Route::get('/personnel-tasks', [ReportsController::class, 'getPersonnelTaskReport']);
     Route::get('/personnel-tasks-export', [ReportsController::class, 'exportPersonnelTasks']);
     Route::get('/performance', [ReportsController::class, 'getPerformanceReport']);
+
+    Route::middleware('permission:view stocks')->group(function () {
+        Route::get('/stocks/export', [ReportController::class, 'exportStocks']);
+    });
+    Route::middleware('permission:view planning')->group(function () {
+        Route::get('/production/export', [ReportController::class, 'exportProduction']);
+    });
 });
 
 // ===== Database Admin API =====
