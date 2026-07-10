@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Services\TelegramNotificationService;
+use App\Events\NewNotification;
 
 class NotificationService
 {
@@ -79,8 +80,33 @@ class NotificationService
             $this->sendTelegramMessage($user, $title, $message);
         } elseif ($channel === 'email' || $channel === 'mail') {
             $this->sendEmailMessage($user, $title, $message);
+        } elseif ($channel === 'broadcast' || $channel === 'websocket') {
+            $this->sendBroadcastMessage($user, $title, $message);
         } else {
             Log::warning("Unsupported notification channel: {$channel}");
+        }
+    }
+
+    /**
+     * Send WebSocket broadcast notification.
+     */
+    protected function sendBroadcastMessage(User|Personnel $user, string $title, string $message): void
+    {
+        $userId = intval($user->id ?? $user->PersonelNo ?? 0);
+        if ($userId <= 0) {
+            return;
+        }
+
+        try {
+            broadcast(new NewNotification(
+                userId: $userId,
+                title: $title,
+                message: $message,
+                channel: 'system',
+                severity: 'info'
+            ));
+        } catch (\Throwable $e) {
+            Log::warning("NewNotification broadcast failed: " . $e->getMessage());
         }
     }
 

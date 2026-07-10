@@ -5,21 +5,21 @@
 @section('content')
 <div class="stats-grid">
     <article class="metric-card">
-        <p class="metric-label">Aktif Is Emirleri</p>
-        <h3 class="metric-value">0</h3>
-        <p class="metric-copy">Havuzda bekleyen is emri sayisi.</p>
+        <p class="metric-label">Aktif İş Emirleri</p>
+        <h3 class="metric-value" id="active-work-orders-val">0</h3>
+        <p class="metric-copy">Havuzda bekleyen iş emri sayısı.</p>
     </article>
 
     <article class="metric-card">
-        <p class="metric-label">Tamamlanan Gorevler</p>
-        <h3 class="metric-value">0</h3>
-        <p class="metric-copy">Kapatilan gorev toplami.</p>
+        <p class="metric-label">Tamamlanan Görevler</p>
+        <h3 class="metric-value" id="completed-tasks-val">0</h3>
+        <p class="metric-copy">Kapatılan görev toplamı.</p>
     </article>
 
     <article class="metric-card">
-        <p class="metric-label">Kritik Stok Uyarilari</p>
-        <h3 class="metric-value">0</h3>
-        <p class="metric-copy">Esik altindaki stok sayisi.</p>
+        <p class="metric-label">Kritik Stok Uyarıları</p>
+        <h3 class="metric-value" id="critical-stock-warnings-val">0</h3>
+        <p class="metric-copy">Eşik altındaki stok sayısı.</p>
     </article>
 </div>
 
@@ -51,3 +51,29 @@
     </div>
 @endif
 @endsection
+
+@push('scripts')
+<script>
+    async function loadDashboardStats() {
+        try {
+            const response = await fetch('/api/dashboard-stats');
+            const data = await response.json();
+            
+            document.getElementById('active-work-orders-val').textContent = data.poolTasks || 0;
+            document.getElementById('completed-tasks-val').textContent = data.completedTasks || 0;
+            document.getElementById('critical-stock-warnings-val').textContent = data.criticalStocks || 0;
+        } catch (e) {
+            console.error('Failed to load dashboard stats:', e);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadDashboardStats();
+
+        // WebSocket Live Updates
+        document.addEventListener('work-order-updated', () => loadDashboardStats());
+        document.addEventListener('stock-alert-received', () => loadDashboardStats());
+        document.addEventListener('task-assigned-to-me', () => loadDashboardStats());
+    });
+</script>
+@endpush

@@ -85,6 +85,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
     <link href="{{ asset('css/minimal-ui.css') }}?v={{ file_exists(public_path('css/minimal-ui.css')) ? filemtime(public_path('css/minimal-ui.css')) : time() }}" rel="stylesheet">
     @stack('styles')
+    @vite(['resources/js/app.js'])
 </head>
 <body class="ui-shell">
 <div class="crm-shell" data-crm-shell>

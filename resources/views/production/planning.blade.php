@@ -3504,6 +3504,25 @@ document.addEventListener('DOMContentLoaded', () => {
     loadPersonelList();
     startAutoRefresh();
     initKeyboardShortcuts();
+
+    // WebSocket Live Updates
+    document.addEventListener('work-order-updated', (e) => {
+        if (typeof loadPersonelTasks === 'function') {
+            loadPersonelTasks();
+        }
+        if (typeof loadPoolTasks === 'function') {
+            loadPoolTasks();
+        }
+    });
+
+    document.addEventListener('task-assigned-to-me', (e) => {
+        if (typeof loadPersonelTasks === 'function') {
+            loadPersonelTasks();
+        }
+        if (typeof loadPoolTasks === 'function') {
+            loadPoolTasks();
+        }
+    });
 });
 </script>
 @endpush

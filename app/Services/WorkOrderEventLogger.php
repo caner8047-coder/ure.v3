@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Events\WorkOrderStatusChanged;
+use App\Events\TaskAssigned;
 use App\Models\WorkOrderEvent;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
@@ -26,7 +29,118 @@ class WorkOrderEventLogger
         $event = WorkOrderEvent::create($normalized);
         $this->snapshotProjector->projectFromEvent($event);
 
+        // Broadcast work order status change via WebSocket
+        $this->broadcastStatusChange($event);
+
+        // Broadcast task assignment or take via WebSocket
+        $this->broadcastTaskAssignment($event);
+
         return $event;
+    }
+
+    /**
+     * Fire a WebSocket broadcast event when a work order status changes.
+     */
+    private function broadcastStatusChange(WorkOrderEvent $event): void
+    {
+        $statusBefore = $event->status_before;
+        $statusAfter = $event->status_after;
+
+        // Only broadcast when there's an actual status transition
+        if ($statusBefore === null && $statusAfter === null) {
+            return;
+        }
+        if ($statusBefore === $statusAfter) {
+            return;
+        }
+
+        try {
+            $departmentId = $this->resolveDepartmentId($event);
+
+            broadcast(new WorkOrderStatusChanged(
+                orderItemNo: intval($event->order_item_no ?? 0),
+                workOrderNo: intval($event->work_order_no ?? 0),
+                statusBefore: $statusBefore,
+                statusAfter: $statusAfter,
+                departmentId: $departmentId,
+                actorName: $event->actor_name,
+                titleHuman: $event->title_human,
+                summaryHuman: $event->summary_human,
+                snapshotData: array_filter([
+                    'aggregate_type' => $event->aggregate_type,
+                    'aggregate_id' => $event->aggregate_id,
+                    'event_type' => $event->event_type,
+                ]),
+            ));
+        } catch (\Throwable $e) {
+            Log::warning('WorkOrderStatusChanged broadcast failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Resolve department ID from event context for channel routing.
+     */
+    private function resolveDepartmentId(WorkOrderEvent $event): ?int
+    {
+        $context = $event->context ?? [];
+        if (!empty($context['department_id'])) {
+            return intval($context['department_id']);
+        }
+
+        // Try to resolve from order item
+        $orderItemNo = intval($event->order_item_no ?? 0);
+        if ($orderItemNo > 0 && Schema::hasTable('tbSiparisSatir')) {
+            $row = DB::table('tbSiparisSatir')
+                ->where('No', $orderItemNo)
+                ->value('BolumAdiNo');
+            if ($row) {
+                return intval($row);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Broadcast task assignment or take via WebSocket.
+     */
+    private function broadcastTaskAssignment(WorkOrderEvent $event): void
+    {
+        $type = $event->event_type;
+        if ($type !== 'task_assigned_by_admin' && $type !== 'personnel_task_taken') {
+            return;
+        }
+
+        try {
+            $payload = $event->payload_after ?? $event->payload_before ?? [];
+            $personnelNo = intval($payload['PersonelNo'] ?? $event->actor_id ?? 0);
+            if ($personnelNo <= 0) {
+                return;
+            }
+
+            $personnel = DB::table('tbPersonel')->where('PersonelNo', $personnelNo)->first();
+            $personnelName = $personnel ? trim($personnel->Ad . ' ' . $personnel->Soyad) : ($event->actor_name ?? 'Bilinmeyen Personel');
+            $departmentId = $personnel ? intval($personnel->BolumAdiNo) : intval($payload['BolumAdiNo'] ?? 0);
+
+            $componentNo = intval($payload['AraUrunAdiNo'] ?? 0);
+            $componentName = '';
+            if ($componentNo > 0) {
+                $componentName = DB::table('tbAraUrun')->where('No', $componentNo)->value('AraUrunAdi') ?? '';
+            }
+
+            broadcast(new TaskAssigned(
+                taskNo: intval($event->personnel_task_no ?? 0),
+                personnelNo: $personnelNo,
+                departmentId: $departmentId > 0 ? $departmentId : null,
+                personnelName: $personnelName,
+                taskDescription: $event->summary_human ?? 'Yeni görev atandı.',
+                productName: $componentName !== '' ? $componentName : null,
+                orderItemNo: intval($event->order_item_no ?? 0),
+                assignedBy: $type === 'task_assigned_by_admin' ? 'Yönetici' : 'Personel (Kendisi)'
+            ));
+        } catch (\Throwable $e) {
+            Log::warning('TaskAssigned broadcast failed: ' . $e->getMessage());
+        }
     }
 
     private function normalize(array $attributes): array

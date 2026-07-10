@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Events\CriticalStockAlert;
 use App\Models\StockMovement;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
@@ -55,7 +57,14 @@ class StockMovementLogger
 
         $payload['metadata'] = $metadata;
 
-        return $this->log($payload);
+        $movement = $this->log($payload);
+
+        // Check critical stock thresholds and broadcast alert if needed
+        if ($movement && $quantityAfter !== null) {
+            $this->checkCriticalStockThreshold($movement, $quantityAfter, $payload);
+        }
+
+        return $movement;
     }
 
     public function log(array $attributes): ?StockMovement
@@ -296,5 +305,59 @@ class StockMovementLogger
         }
 
         return $this->supported;
+    }
+
+    /**
+     * Check if component quantity is below critical threshold and broadcast alert.
+     */
+    private function checkCriticalStockThreshold(StockMovement $movement, int $quantityAfter, array $payload): void
+    {
+        $componentNo = $movement->component_no;
+        if (!$componentNo) {
+            return;
+        }
+
+        try {
+            $threshold = DB::table('tbKritikStokEsik')
+                ->where('AraUrunAdiNo', $componentNo)
+                ->where('Aktif', 1)
+                ->first();
+
+            if (!$threshold) {
+                return;
+            }
+
+            $esikMiktar = intval($threshold->EsikMiktar);
+            if ($quantityAfter <= $esikMiktar) {
+                // Get component name
+                $componentName = DB::table('tbAraUrun')
+                    ->where('No', $componentNo)
+                    ->value('AraUrunAdi') ?? 'Bilinmeyen Ürün';
+
+                // Get department name
+                $departmentNo = $movement->department_no;
+                $departmentName = 'Genel Depo';
+                if ($departmentNo) {
+                    $departmentName = DB::table('tbBolum')
+                        ->where('No', $departmentNo)
+                        ->value('BolumAdi') ?? 'Departman #' . $departmentNo;
+                }
+
+                broadcast(new CriticalStockAlert(
+                    stockRowNo: intval($movement->stock_row_no ?? 0),
+                    componentNo: $componentNo,
+                    departmentNo: $departmentNo,
+                    productNo: $movement->product_no,
+                    componentName: $componentName,
+                    departmentName: $departmentName,
+                    currentQuantity: $quantityAfter,
+                    thresholdQuantity: $esikMiktar,
+                    quantityDelta: intval($movement->quantity_delta),
+                    forecastSummary: null
+                ));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('CriticalStockThreshold check or broadcast failed: ' . $e->getMessage());
+        }
     }
 }

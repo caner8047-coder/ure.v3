@@ -142,6 +142,19 @@ class ReportsService
             })
             ->count();
         $poolTasks = DB::table('tbBolumHavuz')->where('Adet', '>', 0)->count();
+        
+        $completedTasks = 0;
+        if (Schema::hasTable('tbGorevler')) {
+            $completedTasks = DB::table('tbGorevler')->count();
+        }
+
+        $criticalStocks = 0;
+        if (Schema::hasTable('tbKritikStokEsik')) {
+            $criticalStocks = DB::table('tbKritikStokEsik')
+                ->where('Aktif', 1)
+                ->whereRaw('IFNULL((SELECT SUM(s.Adet) FROM tbBolumAraStok s WHERE s.AraUrunAdiNo = tbKritikStokEsik.AraUrunAdiNo), 0) <= EsikMiktar')
+                ->count();
+        }
 
         return [
             'totalOrders' => $totalOrders,
@@ -150,6 +163,8 @@ class ReportsService
             'totalPersonnel' => $totalPersonnel,
             'activeTasks' => $activeTasks,
             'poolTasks' => $poolTasks,
+            'completedTasks' => $completedTasks,
+            'criticalStocks' => $criticalStocks,
         ];
     }
 

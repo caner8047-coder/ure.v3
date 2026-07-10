@@ -1844,5 +1844,18 @@ function setTimestamp() {
     const el = document.getElementById('summaryUpdatedInline');
     if (el) el.textContent = t;
 }
+
+// WebSocket Live Updates
+document.addEventListener('stock-alert-received', (e) => {
+    if (typeof loadStocks === 'function') {
+        loadStocks(currentPage);
+    }
+});
+
+document.addEventListener('work-order-updated', (e) => {
+    if (typeof loadStocks === 'function') {
+        loadStocks(currentPage);
+    }
+});
 </script>
 @endpush

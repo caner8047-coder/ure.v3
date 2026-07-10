@@ -1061,5 +1061,12 @@
     }
 
     loadSummary();
+
+    // WebSocket Live Updates
+    document.addEventListener('work-order-updated', (e) => {
+        if (typeof loadSummary === 'function') {
+            loadSummary();
+        }
+    });
 </script>
 @endpush
