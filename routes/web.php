@@ -29,6 +29,8 @@ use App\Http\Controllers\TelegramSettingsController;
 use App\Http\Controllers\TelegramWebhookController;
 use App\Http\Controllers\ForecastController;
 
+Route::get('/mobile', function () { return view('pwa.shell'); })->name('mobile.pwa');
+
 Route::get('/', function () {
     if (!Auth::check()) {
         return redirect()->route('login');

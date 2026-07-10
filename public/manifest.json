@@ -1,0 +1,22 @@
+{
+  "name": "ZemuRetim Mobil Paneli",
+  "short_name": "ZemuMobil",
+  "description": "ZemuRetim v3 Mobil PWA Personel Paneli",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "background_color": "#0b0f19",
+  "theme_color": "#0ea5e9",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/images/logo-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/images/logo-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
